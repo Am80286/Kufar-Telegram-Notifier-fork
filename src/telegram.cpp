@@ -6,6 +6,7 @@
 //
 
 #include <iostream>
+#include <cstdint>
 #include "kufar.hpp"
 #include "telegram.hpp"
 #include "networking.hpp"

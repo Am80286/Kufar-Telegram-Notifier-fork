@@ -9,6 +9,7 @@
 #define kufar_hpp
 
 #include <vector>
+#include <string>
 #include <optional>
 
 // TODO: В некоторых местах поменять оформление с enum на struct

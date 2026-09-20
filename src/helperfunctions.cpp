@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <iostream>
 #include <libgen.h>
+#include <cstdint>
 
 using namespace std;
 
