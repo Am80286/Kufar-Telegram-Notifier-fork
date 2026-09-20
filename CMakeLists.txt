@@ -13,6 +13,8 @@ project(
 
 include_directories(include)
 
+find_package(CURL REQUIRED)
+
 add_executable(
     Kufar-Telegram-Notifier
     
