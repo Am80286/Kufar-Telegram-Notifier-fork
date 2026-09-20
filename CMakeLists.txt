@@ -25,4 +25,4 @@ add_executable(
     src/main.cpp
 )
 
-target_link_libraries(Kufar-Telegram-Notifier curl)
+target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl)
