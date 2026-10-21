@@ -127,20 +127,8 @@ std::string joinIntVector(const std::vector<int> &, const std::string &);
 time_t timestampShift(const time_t &, int);
 
 /**
- Проверка string на наличие указанного префикса
- */
-
-bool stringHasPrefix(const std::string &, const std::string &);
-
-/**
  Сохранение текста в файл с перезаписью
  */
 void saveFile(const std::string &path, const std::string &contents);
-
-/**
- Возвращает путь, откуда запущено приложение
- Отдельно реализованы функции для macOS и Linux
- */
-std::optional<std::string> getWorkingDirectory();
 
 #endif /* helperfunctions_hpp */

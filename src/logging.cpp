@@ -7,15 +7,23 @@
 
 #include "logging.hpp"
 #include <chrono>
+#include <vector>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
 namespace logging {
 
-void init(const std::string& logfile, spdlog::level::level_enum level) {
+void init(const std::string& logfile, spdlog::level::level_enum level, bool logToFile) {
     auto console = std::make_shared<spdlog::sinks::stdout_color_sink_mt>(spdlog::color_mode::always);
-    auto file = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(logfile, 5 * 1024 * 1024, 3);  // 5 MB per file, keep 3
-    auto logger = std::make_shared<spdlog::logger>("app", spdlog::sinks_init_list{console, file});
+
+    std::vector<spdlog::sink_ptr> sinks{console};
+    if (logToFile) {
+        sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            logfile, 5 * 1024 * 1024, 3  // 5 MB per file, keep 3
+        ));
+    }
+
+    auto logger = std::make_shared<spdlog::logger>("app", sinks.begin(), sinks.end());
 
     logger->set_level(level);
     logger->flush_on(spdlog::level::warn);  // flush immediately on warn+

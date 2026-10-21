@@ -25,6 +25,9 @@ add_executable(
     src/networking.cpp
     src/main.cpp
     src/logging.cpp
+    src/arguments.cpp
 )
+
+target_compile_definitions(Kufar-Telegram-Notifier PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl spdlog::spdlog)

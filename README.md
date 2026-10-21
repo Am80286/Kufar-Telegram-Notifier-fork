@@ -136,17 +136,30 @@
 Предназначение: хранит в себе идентификаторы отправленных объявлений для предотвращения повторной отправки при перезапуске программы.
 </details>
 <h2>Запуск:</h2>
+   <p>
+      По умолчанию <code>kufar-configuration.json</code>, <code>cached-data.json</code> и <code>kufar-notifier.log</code>
+      ищутся (а при необходимости создаются) в текущей рабочей папке. Пути можно переопределить аргументами командной строки.
+   </p>
    <details>
       <summary>
-         Вариант с указанием путей к файлам конфигурации и кеша.
+         Аргументы командной строки
       </summary>
-      <code>bin/Kufar-Telegram-Notifier --config="/путь/к/kufar-configuration.json" --cache="/путь/к/cached-data.json"</code>
+      <code>bin/Kufar-Telegram-Notifier [параметры]</code><br><br>
+      <b>-c, --config &lt;файл&gt;</b> - путь к файлу конфигурации.<br>
+      <b>--cache &lt;файл&gt;</b> - путь к файлу кеша (создаётся автоматически, если отсутствует).<br>
+      <b>-l, --log &lt;файл&gt;</b> - путь к файлу лога.<br>
+      <b>--no-log</b> - не записывать лог в файл (только консоль).<br>
+      <b>--log-level &lt;уровень&gt;</b> - уровень логирования: <code>trace</code>, <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>, <code>critical</code>.<br>
+      <b>-V, --version</b> - показать версию программы.<br>
+      <b>-h, --help</b> - показать справку.
    </details>
    <details>
       <summary>
-         Вариант с автоматическим поиском файлов конфигурации (<code>kufar-configuration.json</code>) и кеша (<code>cached-data.json</code>) в папке с программой.<br><sup>(Необходимо поместить <code>kufar-configuration.json</code> и <code>cached-data.json</code> в папку с программой)</sup>
+         Примеры запуска
       </summary>
-      <code>bin/Kufar-Telegram-Notifier</code>
+      <code>bin/Kufar-Telegram-Notifier</code> - файлы по умолчанию в текущей папке.<br>
+      <code>bin/Kufar-Telegram-Notifier --config="/путь/к/kufar-configuration.json" --cache="/путь/к/cached-data.json"</code><br>
+      <code>bin/Kufar-Telegram-Notifier --log=/путь/к/kufar.log --log-level=debug</code>
    </details>
 <p align="center">
    <img src="https://user-images.githubusercontent.com/83237609/181288185-7f9c23b0-32bf-4a1a-a3fd-168ed38255e1.png"/>
