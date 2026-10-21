@@ -30,7 +30,7 @@ namespace Networking {
     }
 
     string getJSONFromURL(const string &url) {
-        DEBUG_MSG("[URL: " << url << "]");
+        DEBUG_MSG("[URL: {}]", url);
         
         //curl_global_init(CURL_GLOBAL_DEFAULT);
         auto curl = curl_easy_init();

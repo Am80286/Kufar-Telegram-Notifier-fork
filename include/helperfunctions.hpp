@@ -15,9 +15,9 @@
  */
 
 #ifdef DEBUG
-    #define DEBUG_MSG(str) do { std::cout << str << std::endl; } while( false )
+    #define DEBUG_MSG(...) do { spdlog::debug(__VA_ARGS__); } while( false )
 #else
-    #define DEBUG_MSG(str) do { } while ( false )
+    #define DEBUG_MSG(...) do { } while ( false )
 #endif
 
 #if defined(WIN32) || defined(_WIN32)
@@ -27,6 +27,11 @@
 #endif
 
 #include <optional>
+#include <sstream>
+#include <string>
+
+#include <spdlog/spdlog.h>
+
 #include "json.hpp"
 
 static const std::string PROPERTY_UNDEFINED = "[UNDEFINED]";
@@ -62,6 +67,19 @@ std::ostream &operator << (std::ostream &os, std::optional<T> const &opt) {
         return (os << opt.value());
     }
     return (os << PROPERTY_UNDEFINED);
+}
+
+/**
+  Приведение значения к строке с использованием
+  перегруженного оператора вывода (в том числе
+  для std::optional).
+ */
+
+template<typename T>
+std::string toString(const T &value) {
+    std::ostringstream stream;
+    stream << value;
+    return stream.str();
 }
 
 /**

@@ -101,3 +101,6 @@ _deps
 ### Ignore bin folder
 bin/
 
+### Ignore log files
+*.log
+
