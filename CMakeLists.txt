@@ -14,6 +14,7 @@ project(
 include_directories(include)
 
 find_package(CURL REQUIRED)
+find_package(spdlog REQUIRED)
 
 add_executable(
     Kufar-Telegram-Notifier
@@ -23,6 +24,7 @@ add_executable(
     src/telegram.cpp
     src/networking.cpp
     src/main.cpp
+    src/logging.cpp
 )
 
-target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl)
+target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl spdlog::spdlog)

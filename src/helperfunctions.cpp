@@ -17,6 +17,7 @@
 #include <iostream>
 #include <libgen.h>
 #include <cstdint>
+#include <spdlog/spdlog.h>
 
 using namespace std;
 
@@ -78,7 +79,7 @@ bool stringHasPrefix(const string &originalString, const string &prefix) {
 
 void saveFile(const string &path, const string &contents) {
     // Перезапись файла [ВКЛ]
-    cout << "[Сохранение идентификаторов отправленных объявлений]" << endl;
+    spdlog::info("[Сохранение идентификаторов отправленных объявлений]");
     ofstream ofs(path, ofstream::trunc);
     ofs << contents;
     ofs.close();

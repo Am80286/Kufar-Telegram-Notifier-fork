@@ -11,11 +11,15 @@
 #include <fstream>
 #include <vector>
 
+#include "spdlog/spdlog.h"
+#include "spdlog/cfg/env.h"
+
 #include "json.hpp"
 #include "kufar.hpp"
 #include "telegram.hpp"
 #include "networking.hpp"
 #include "helperfunctions.hpp"
+#include "logging.hpp"
 
 using namespace std;
 using namespace Kufar;
@@ -24,6 +28,7 @@ using nlohmann::json;
 
 const string CACHE_FILE_NAME = "cached-data.json";
 const string CONFIGURATION_FILE_NAME = "kufar-configuration.json";
+const string LOG_FILE_NAME = "kufar-notifier.log";
 
 struct ConfigurationFile {
     string path;
@@ -100,74 +105,100 @@ void loadJSONConfigurationData(const json &data, ProgramConfiguration &programCo
     }
 }
 
-void printJSONConfigurationData(const ProgramConfiguration &programConfiguration) {
-    cout <<
-    "- Telegram:\n"
-        "\t- Токен: " << programConfiguration.telegramConfiguration.botToken << "\n"
-        "\t- ID Чата: " << programConfiguration.telegramConfiguration.chatID << "\n\n"
-    "- Запросы:\n";
-    
-    for (const auto &query : programConfiguration.kufarConfiguration) {
-        cout <<
-        "\t- Название: " << query.tag << "\n"
-        "\t- Поиск только по заголовку: " << query.onlyTitleSearch << "\n"
-        "\t- Цена:\n"
-            "\t\t- Минимальная: " << query.priceRange.priceMin << " BYN\n"
-            "\t\t- Максимальная: " << query.priceRange.priceMax << " BYN\n"
-        "\t- Язык: " << query.language << "\n"
-        "\t- Макс. кол-во объявлений за один запрос: " << query.limit << "\n"
-        "\t- Валюта: " << query.currency << "\n"
-        "\t- Состояние: " << (query.condition.has_value() ?
-             EnumString::itemCondition(query.condition.value()) : PROPERTY_UNDEFINED) << "\n"
-        "\t- Продавец: " << (query.sellerType.has_value() ?
-             EnumString::sellerType(query.sellerType.value()) : PROPERTY_UNDEFINED) << "\n"
-        "\t- Только с Kufar Доставкой: " << query.kufarDeliveryRequired << "\n"
-        "\t- Только с Kufar Оплатой: " << query.kufarPaymentRequired << "\n"
-        "\t- Только с Kufar Рассрочкой (Халва): " << query.kufarPaymentRequired << "\n"
-        "\t- Только с фото: " << query.onlyWithPhotos << "\n"
-        "\t- Только с видео: " << query.onlyWithVideos << "\n"
-        "\t- Только с возможностью обмена: " << query.onlyWithExchangeAvailable << "\n"
-        "\t- Тип сортировки: " << (query.sortType.has_value() ? EnumString::sortType(query.sortType.value()) : PROPERTY_UNDEFINED) << "\n"
-        "\t- Категория: " << (query.category.has_value() ?
-                              EnumString::category(query.category.value()) : PROPERTY_UNDEFINED) << "\n"
-        "\t- Подкатегория: " << (query.subCategory.has_value() ? EnumString::subCategory(query.subCategory.value()) : PROPERTY_UNDEFINED) << "\n"
-        "\t- Город: " << (query.region.has_value() ? EnumString::region(query.region.value()) : PROPERTY_UNDEFINED)<< "\n"
-        "\t- Район: ";
-        
-        if (query.areas.has_value()) {
-            unsigned int currentIndex = 0;
-            const uint64_t &vectorSize = query.areas.value().size();
-            
-            for (const auto &area : query.areas.value()){
-                cout << EnumString::area(area);
-                
-                if (currentIndex++ < vectorSize - 1) {
-                    cout << ", ";
-                }
-            }
-        } else {
-            cout << PROPERTY_UNDEFINED;
-        }
-        
-        cout << "\n\n";
+std::string joinAreas(const std::optional<std::vector<int>> &areas) {
+    if (!areas.has_value()) {
+        return PROPERTY_UNDEFINED;
     }
     
-    cout <<
-    "- Задержки:\n"
-        "\t- Перед новым запросом: " << programConfiguration.queryDelaySeconds << "с. \n"
-        "\t- После прохода всего списка запросов: " << programConfiguration.loopDelaySeconds << "c." << endl;
+    std::string joinedAreas;
+    const std::vector<int> &values = areas.value();
+    
+    for (size_t i = 0; i < values.size(); i++) {
+        if (i > 0) {
+            joinedAreas += ", ";
+        }
+        joinedAreas += EnumString::area(values[i]);
+    }
+    
+    return joinedAreas;
+}
+
+void printJSONConfigurationData(const ProgramConfiguration &programConfiguration) {
+    spdlog::info(
+        "\n- Telegram:\n"
+        "\t- Токен: {}\n"
+        "\t- ID Чата: {}\n",
+        programConfiguration.telegramConfiguration.botToken,
+        programConfiguration.telegramConfiguration.chatID
+    );
+    
+    spdlog::info("\n- Запросы:");
+
+    for (const auto &query : programConfiguration.kufarConfiguration) {
+        spdlog::info(
+            "\n\t- Название: {}\n"
+            "\t- Поиск только по заголовку: {}\n"
+            "\t- Цена:\n"
+            "\t\t- Минимальная: {} BYN\n"
+            "\t\t- Максимальная: {} BYN\n"
+            "\t- Язык: {}\n"
+            "\t- Макс. кол-во объявлений за один запрос: {}\n"
+            "\t- Валюта: {}\n"
+            "\t- Состояние: {}\n"
+            "\t- Продавец: {}\n"
+            "\t- Только с Kufar Доставкой: {}\n"
+            "\t- Только с Kufar Оплатой: {}\n"
+            "\t- Только с Kufar Рассрочкой (Халва): {}\n"
+            "\t- Только с фото: {}\n"
+            "\t- Только с видео: {}\n"
+            "\t- Только с возможностью обмена: {}\n"
+            "\t- Тип сортировки: {}\n"
+            "\t- Категория: {}\n"
+            "\t- Подкатегория: {}\n"
+            "\t- Город: {}\n"
+            "\t- Район: {}\n",
+            toString(query.tag),
+            toString(query.onlyTitleSearch),
+            toString(query.priceRange.priceMin),
+            toString(query.priceRange.priceMax),
+            toString(query.language),
+            toString(query.limit),
+            toString(query.currency),
+            (query.condition.has_value() ? EnumString::itemCondition(query.condition.value()) : PROPERTY_UNDEFINED),
+            (query.sellerType.has_value() ? EnumString::sellerType(query.sellerType.value()) : PROPERTY_UNDEFINED),
+            toString(query.kufarDeliveryRequired),
+            toString(query.kufarPaymentRequired),
+            toString(query.kufarHalvaRequired),
+            toString(query.onlyWithPhotos),
+            toString(query.onlyWithVideos),
+            toString(query.onlyWithExchangeAvailable),
+            (query.sortType.has_value() ? EnumString::sortType(query.sortType.value()) : PROPERTY_UNDEFINED),
+            (query.category.has_value() ? EnumString::category(query.category.value()) : PROPERTY_UNDEFINED),
+            (query.subCategory.has_value() ? EnumString::subCategory(query.subCategory.value()) : PROPERTY_UNDEFINED),
+            (query.region.has_value() ? EnumString::region(query.region.value()) : PROPERTY_UNDEFINED),
+            joinAreas(query.areas)
+        );
+    }
+
+    spdlog::info(
+        "\n- Задержки:\n"
+        "\t- Перед новым запросом: {}с. \n"
+        "\t- После прохода всего списка запросов: {}c.",
+        programConfiguration.queryDelaySeconds,
+        programConfiguration.loopDelaySeconds
+    );
 }
 
 json getJSONDataFromPath(const string &JSONFilePath) {
-    cout << "[Загрузка файла]: " << '"' << JSONFilePath << '"' << endl;
+    spdlog::info("[Загрузка файла]: \"{}\"", JSONFilePath);
 
     if (!fileExists(JSONFilePath)){
-        cout << "[ОШИБКА]: Файл не существует по данному пути или к нему нет доступа." << endl;
+        spdlog::error("Файл не существует по данному пути или к нему нет доступа.");
         exit(1);
     }
     
     if (getFileSize(JSONFilePath) > 4000000) {
-        cout << "[ОШИБКА]: Размер файла превышает 4МБ." << endl;
+        spdlog::error("Размер файла превышает 4МБ.");
         exit(1);
     }
         
@@ -175,8 +206,7 @@ json getJSONDataFromPath(const string &JSONFilePath) {
        json textFromFile = json::parse(getTextFromFile(JSONFilePath));
        return textFromFile;
     } catch (const exception &exc) {
-       cout << "[ОШИБКА]: Невозможно получить данные из файла " << '"' << JSONFilePath << '"' << endl;
-       cout << "::: " << exc.what() << " :::" << endl;
+       spdlog::error("Невозможно получить данные из файла \"{}\": {}", JSONFilePath, exc.what());
        exit(1);
     }
 
@@ -211,7 +241,7 @@ Files getFiles(const int &argsCount, char **args) {
         optional<string> applicationDirectory = getWorkingDirectory();
         
         if (!applicationDirectory.has_value()) {
-            cout << "[ОШИБКА]: Невозможно автоматически определить путь к текущей папке. Передайте файл конфигурации/кеша в виде аргумента." << endl;
+            spdlog::error("Невозможно автоматически определить путь к текущей папке. Передайте файл конфигурации/кеша в виде аргумента.");
             exit(1);
         }
         
@@ -231,6 +261,21 @@ Files getFiles(const int &argsCount, char **args) {
 }
 
 int main(int argc, char **argv) {
+    string logFilePath = LOG_FILE_NAME;
+    optional<string> applicationDirectory = getWorkingDirectory();
+    if (applicationDirectory.has_value()) {
+        logFilePath = applicationDirectory.value() + PATH_SEPARATOR + LOG_FILE_NAME;
+    }
+    
+    try {
+        logging::init(logFilePath);
+    } catch (const spdlog::spdlog_ex &exc) {
+        spdlog::warn("Не удалось инициализировать файловый логгер ({}): {}", logFilePath, exc.what());
+    }
+    
+    spdlog::cfg::load_env_levels();
+    spdlog::info("Starting logger");
+
     ProgramConfiguration programConfiguration;
     vector<int> viewedAds;
     
@@ -247,32 +292,32 @@ int main(int argc, char **argv) {
             try {
                 for (const auto &advert : getAds(requestConfiguration)) {
                     if (!vectorContains(viewedAds, advert.id)) {
-                        cout << "[New]: Adding [Title: " << advert.title << "], [ID: " << advert.id << "], [Tag: " << advert.tag << "], [Link: " << advert.link << "]" << endl;
+                        spdlog::info("[New]: Adding [Title: {}], [ID: {}], [Tag: {}], [Link: {}]", advert.title, advert.id, advert.tag.value_or(PROPERTY_UNDEFINED), advert.link);
                         viewedAds.push_back(advert.id);
                         sentCount += 1;
 
                         try {
                             sendAdvert(programConfiguration.telegramConfiguration, advert);
                         } catch (const exception &exc) {
-                            cerr << "[ERROR (sendAdvert)]: " << exc.what() << endl;
+                            spdlog::error("(sendAdvert): {}", exc.what());
                         }
                         
                     } else {
-                        //cout << "[Already was!]" << endl;
+                        //spdlog::debug("[Already was!]");
                     }
                     usleep(300000); // 0.3s
                 }
             } catch (const exception &exc) {
-                cerr << "[ERROR (getAds)]: " << exc.what() << endl;
+                spdlog::error("(getAds): {}", exc.what());
             }
-            DEBUG_MSG("[DEBUG]: " << "(QueryDelay) Sleeping for: " << programConfiguration.queryDelaySeconds << "s.");
+            DEBUG_MSG("(QueryDelay) Sleeping for: {}s.", programConfiguration.queryDelaySeconds);
             sleep(programConfiguration.queryDelaySeconds);
             
             if (sentCount > 0) {
                 saveFile(programConfiguration.files.cache.path, ((json)viewedAds).dump());
             }
         }
-        DEBUG_MSG("[DEBUG]: " << "(LoopDelay) Sleeping for: " << programConfiguration.loopDelaySeconds << "s.");
+        DEBUG_MSG("(LoopDelay) Sleeping for: {}s.", programConfiguration.loopDelaySeconds);
         sleep(programConfiguration.loopDelaySeconds);
     }
     return 0;
