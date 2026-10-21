@@ -20,15 +20,16 @@
 #include "networking.hpp"
 #include "helperfunctions.hpp"
 #include "logging.hpp"
+#include "arguments.hpp"
 
 using namespace std;
 using namespace Kufar;
 using namespace Telegram;
 using nlohmann::json;
 
-const string CACHE_FILE_NAME = "cached-data.json";
-const string CONFIGURATION_FILE_NAME = "kufar-configuration.json";
-const string LOG_FILE_NAME = "kufar-notifier.log";
+const string DEFAULT_CACHE_FILE_NAME = "cached-data.json";
+const string DEFAULT_CONFIGURATION_FILE_NAME = "kufar-configuration.json";
+const string DEFAULT_LOG_FILE_NAME = "kufar-notifier.log";
 
 struct ConfigurationFile {
     string path;
@@ -192,97 +193,110 @@ json getJSONDataFromPath(const string &JSONFilePath) {
     spdlog::info("[Загрузка файла]: \"{}\"", JSONFilePath);
 
     if (!fileExists(JSONFilePath)){
-        spdlog::error("Файл не существует по данному пути или к нему нет доступа.");
-        exit(1);
+        throw runtime_error("Файл не существует по данному пути или к нему нет доступа: \"" + JSONFilePath + "\"");
     }
     
     if (getFileSize(JSONFilePath) > 4000000) {
-        spdlog::error("Размер файла превышает 4МБ.");
-        exit(1);
+        throw runtime_error("Размер файла превышает 4МБ: \"" + JSONFilePath + "\"");
     }
         
     try {
        json textFromFile = json::parse(getTextFromFile(JSONFilePath));
        return textFromFile;
     } catch (const exception &exc) {
-       spdlog::error("Невозможно получить данные из файла \"{}\": {}", JSONFilePath, exc.what());
-       exit(1);
+       throw runtime_error("Невозможно получить данные из файла \"" + JSONFilePath + "\": " + exc.what());
     }
 
 }
 
-const string prefixConfigurationFile = "--config=";
-const string prefixCacheFile = "--cache=";
+void createEmptyCacheFile(const string &path) {
+    spdlog::info("[Кеш] Файл не найден, создаю новый: \"{}\"", path);
+
+    ofstream cacheFile(path, ofstream::trunc);
+    if (!cacheFile) {
+        throw runtime_error("Не удалось создать файл кеша: \"" + path + "\"");
+    }
+    cacheFile << "[]";
+    cacheFile.close();
+
+    if (!cacheFile) {
+        throw runtime_error("Не удалось записать файл кеша: \"" + path + "\"");
+    }
+}
 
 /**
-  Загрузка файлов:
-  kufar-configuration.json,
-  cached-data.json
+  Загрузка файлов конфигурации и кеша.
+  Отсутствующий файл кеша создаётся автоматически.
  */
 
-Files getFiles(const int &argsCount, char **args) {
+Files loadFiles(const arguments::Options &options) {
     Files files;
-    
-    for (int i = 0; i < argsCount; i++){
-        string currentArgument = args[i];
-        
-        if(stringHasPrefix(currentArgument, prefixConfigurationFile)) {
-            currentArgument.erase(0, prefixConfigurationFile.length());
-            files.configuration.path = currentArgument;
-        } else if (stringHasPrefix(currentArgument, prefixCacheFile)) {
-            currentArgument.erase(0, prefixCacheFile.length());
-            files.cache.path = currentArgument;
-        }
-        
-    }
-    
-    if (files.configuration.path.empty() || files.cache.path.empty()) {
-        optional<string> applicationDirectory = getWorkingDirectory();
-        
-        if (!applicationDirectory.has_value()) {
-            spdlog::error("Невозможно автоматически определить путь к текущей папке. Передайте файл конфигурации/кеша в виде аргумента.");
-            exit(1);
-        }
-        
-        if (files.configuration.path.empty()) {
-            files.configuration.path = applicationDirectory.value() + PATH_SEPARATOR + CONFIGURATION_FILE_NAME;
-        }
-        
-        if (files.cache.path.empty()) {
-            files.cache.path = applicationDirectory.value() + PATH_SEPARATOR + CACHE_FILE_NAME;
-        }
-    }
-    
+    files.configuration.path = options.configPath;
+    files.cache.path = options.cachePath;
+
     files.configuration.contents = getJSONDataFromPath(files.configuration.path);
+
+    if (!fileExists(files.cache.path)) {
+        createEmptyCacheFile(files.cache.path);
+    }
     files.cache.contents = getJSONDataFromPath(files.cache.path);
-    
+
     return files;
 }
 
 int main(int argc, char **argv) {
-    string logFilePath = LOG_FILE_NAME;
-    optional<string> applicationDirectory = getWorkingDirectory();
-    if (applicationDirectory.has_value()) {
-        logFilePath = applicationDirectory.value() + PATH_SEPARATOR + LOG_FILE_NAME;
+    int exitCode = 0;
+    optional<arguments::Options> parsedOptions = arguments::parse(argc, argv, exitCode);
+    if (!parsedOptions.has_value()) {
+        return exitCode;
     }
-    
+
+    arguments::Options options = parsedOptions.value();
+
+    // По умолчанию файлы ищутся в текущей рабочей папке.
+    if (options.configPath.empty()) {
+        options.configPath = DEFAULT_CONFIGURATION_FILE_NAME;
+    }
+    if (options.cachePath.empty()) {
+        options.cachePath = DEFAULT_CACHE_FILE_NAME;
+    }
+    if (options.logToFile && options.logPath.empty()) {
+        options.logPath = DEFAULT_LOG_FILE_NAME;
+    }
+
     try {
-        logging::init(logFilePath);
+        logging::init(options.logPath, options.logLevel, options.logToFile);
     } catch (const spdlog::spdlog_ex &exc) {
-        spdlog::warn("Не удалось инициализировать файловый логгер ({}): {}", logFilePath, exc.what());
+        spdlog::warn("Не удалось инициализировать файловый логгер ({}): {}", options.logPath, exc.what());
+        options.logToFile = false;
+        logging::init("", options.logLevel, false);
     }
-    
+
     spdlog::cfg::load_env_levels();
+    if (options.logLevelExplicit) {
+        // Явно указанный в командной строке уровень важнее SPDLOG_LEVEL.
+        spdlog::set_level(options.logLevel);
+    }
+
     spdlog::info("Starting logger");
+    spdlog::info("Файл конфигурации: \"{}\"", options.configPath);
+    spdlog::info("Файл кеша: \"{}\"", options.cachePath);
+    if (options.logToFile) {
+        spdlog::info("Файл лога: \"{}\"", options.logPath);
+    }
 
     ProgramConfiguration programConfiguration;
     vector<int> viewedAds;
-    
-    programConfiguration.files = getFiles(argc, argv);
-    loadJSONConfigurationData(programConfiguration.files.configuration.contents, programConfiguration);
-    printJSONConfigurationData(programConfiguration);
 
-    viewedAds = programConfiguration.files.cache.contents.get<vector<int>>();
+    try {
+        programConfiguration.files = loadFiles(options);
+        loadJSONConfigurationData(programConfiguration.files.configuration.contents, programConfiguration);
+        printJSONConfigurationData(programConfiguration);
+        viewedAds = programConfiguration.files.cache.contents.get<vector<int>>();
+    } catch (const exception &exc) {
+        spdlog::error("{}", exc.what());
+        return 1;
+    }
 
     while (true) {
         for (auto requestConfiguration : programConfiguration.kufarConfiguration) {

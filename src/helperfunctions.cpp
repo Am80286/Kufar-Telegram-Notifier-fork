@@ -11,11 +11,6 @@
 #include <iomanip>
 #include <iterator>
 #include <algorithm>
-#include <optional>
-#include <unistd.h>
-#include <limits.h>
-#include <iostream>
-#include <libgen.h>
 #include <cstdint>
 #include <spdlog/spdlog.h>
 
@@ -85,31 +80,3 @@ void saveFile(const string &path, const string &contents) {
     ofs.close();
 }
 
-#ifdef __APPLE__
-    #include <mach-o/dyld.h>
-    #include <filesystem>
-
-    optional<string> getWorkingDirectory() {
-        char buffer[PATH_MAX];
-        uint32_t buffsize = PATH_MAX;
-        
-        if (_NSGetExecutablePath(buffer, &buffsize) == 0) {
-            return dirname(buffer);
-        }
-        
-        return nullopt;
-    }
-#elif __linux__
-    #include <linux/limits.h>
-
-    optional<string> getWorkingDirectory() {
-        char result[PATH_MAX];
-        size_t count = readlink("/proc/self/exe", result, PATH_MAX);
-        if (count != -1) {
-            return dirname(result);
-        }
-        return nullopt;
-    }
-#else
-    optional<string> getWorkingDirectory() { return nullopt; }
-#endif
