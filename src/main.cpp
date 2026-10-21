@@ -132,11 +132,10 @@ void printJSONConfigurationData(const ProgramConfiguration &programConfiguration
         programConfiguration.telegramConfiguration.chatID
     );
     
-    spdlog::info("\n- Запросы:");
-
     for (const auto &query : programConfiguration.kufarConfiguration) {
         spdlog::info(
-            "\n\t- Название: {}\n"
+            "\n- Добавлен запрос:\n"
+            "\t- Название: {}\n"
             "\t- Поиск только по заголовку: {}\n"
             "\t- Цена:\n"
             "\t\t- Минимальная: {} BYN\n"
