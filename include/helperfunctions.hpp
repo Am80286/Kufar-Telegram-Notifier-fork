@@ -131,4 +131,11 @@ time_t timestampShift(const time_t &, int);
  */
 void saveFile(const std::string &path, const std::string &contents);
 
+/**
+  Masks a secret token for safe logging.
+  For a token like "123456:ABC..." returns "123456:***WXYZ",
+  i.e. lets you identify the token without revealing it fully.
+ */
+std::string maskToken(const std::string &token);
+
 #endif /* helperfunctions_hpp */
