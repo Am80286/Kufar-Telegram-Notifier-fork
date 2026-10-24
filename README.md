@@ -1,166 +1,300 @@
-<h1>Kufar Telegram Notifier</h1>
-<b>Kufar Telegram Notifier</b> - бот, который раз в заданное время ведет опрос официального Kufar API для поиска новых объявлений по заданным ключевым словам для последующей отправки результатов в Telegram чат.<br>
-Использование данного бота предусматривается только для ознакомительных целей.<br><br>
-<pre>Если Вы являетесь администрацией Kufar и у Вас имеются претензии к данному проекту - обращайтесь в раздел «<i>Issues</i>» для обратной связи.</pre>
-<p align="center">
-   <img src="https://user-images.githubusercontent.com/83237609/180989226-ec24b7d5-63ea-4ed5-9830-dd40d27ee30d.png" width="600"/>
-</p>
-<h2>Инструкция по сборке</h2>
-<details>
-   <summary>
-      <h3>
-         Linux
-      </h3>
-   </summary>
-   <ol>
-      <li>Установите g++: <code>sudo apt-get install g++</code></li>
-      <li>
-         Установите curl: <code>sudo apt-get install curl libcurl4-gnutls-dev</code>
-      </li>
-      <li>
-         Установите make и cmake: <code>sudo apt-get install make cmake</code>
-      </li>
-      <li>
-         <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/releases">Загрузите</a> исходный код последней версии программы:<br>
-      </li>
-      <li>
-         Распакуйте архив с исходным кодом программы
-      </li>
-      <li>С помощью <code>cd</code> перейдите в директорию c проектом</li>
-      <li>Соберите исполняемый файл с помощью:<br>
-            <code>cmake .</code><br>
-            <code>make</code>
-      </li>
-   </ol>
-</details>
-<details>
-   <summary>
-      <h3>macOS</h3>
-   </summary>
-   <details>
-      <summary>Через Xcode (через графический интерфейс)</summary>
-      <ol>
-         <li>
-            <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/releases">Загрузите</a> исходный код последней версии программы:<br>
-         </li>
-         <li>
-            Распакуйте архив с исходным кодом программы
-         </li>
-         <li>
-            Откройте <code>Kufar Telegram Notifier.xcodeproj</code> в Xcode
-         </li>
-         <li>
-            В верхнем меню-баре выберите "Product" -> "Archive"
-         </li>
-         <li>
-            В новом открывшемся окне нажмите "Distribute Content" -> "Built Products" -> "Next" -> "Export"
-         </li>
-      </ol>
-   </details>
-   <details>
-      <summary>Через Xcode Command Line Tools (через консольный интерфейс)</summary>
-      <ol>
-         <li>
-            Установите Xcode Command Line Tools: <code>xcode-select —install</code>
-         </li>
-         <li>
-            <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/releases">Загрузите</a> исходный код последней версии программы<br>
-         </li>
-         <li>
-            Распакуйте архив с исходным кодом программы
-         </li>
-         <li>С помощью <code>cd</code> перейдите в директорию c проектом</li>
-        <li>Соберите исполняемый файл с помощью:<br>
-            <code>cmake .</code><br>
-            <code>make</code>
-        </li>
-      </ol>
-   </details>
-</details>
-<h2>Конфигурация программы</h2>
-<details>
-   <summary>
-      Настройка kufar-configuration.json
-   </summary>
-   <details>
-      <summary>
-         Telegram
-      </summary>
-      <b>bot-token</b> - токен вашего бота, который будет отправлять сообщения.<br>
-      <b>chat-id</b> - идентификатор чата, в который будут отправляться сообщения.
-   </details>
-   <details>
-      <summary>
-         Queries
-      </summary>
-      <b>tag</b> - поисковой запрос. <sup>(Опционально)</sup><br>
-      <b>only-title-search</b> - осуществление поиска только в заголовках. <sup>(Опционально)</sup>
-      <details>
-         <summary>
-            Price <sup>(Опционально)</sup>
-         </summary>
-         <b>min</b> - минимальная цена (целочисленное значение в BYN). <sup>(Опционально)</sup><br>
-         <b>max</b> - максимальная цена (целочисленное значение в BYN). <sup>(Опционально)</sup>
-      </details>
-      <b>language</b> - язык. <sup>(Опционально)</sup><br>
-      <b>limit</b> - ограничение на количество получаемых объявлений за один запрос. <sup>(Опционально)</sup><br>
-      <b>currency</b> - валюта <sup>(Опционально)</sup><br>
-      <b>condition</b> - <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/blob/4e5eb51e3664c5e4e96812a5e146e41087787484/include/kufar.hpp#L515">состояние</a> (новое / б/y). <sup>(Опционально)</sup><br>
-      <b>seller-type</b> - <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/blob/4e5eb51e3664c5e4e96812a5e146e41087787484/include/kufar.hpp#L520">тип продавца</a> (частное лицо / компания). <sup>(Опционально)</sup><br>
-      <b>kufar-delivery-required</b> - только с Kufar Доставкой. <sup>(Опционально)</sup><br>
-      <b>kufar-payment-required</b> - только с Kufar Оплатой. <sup>(Опционально)</sup><br>
-      <b>kufar-halva-required</b> - только с Kufar Рассрочкой (Халва). <sup>(Опционально)</sup><br>
-      <b>only-with-photos</b> - только с фото. <sup>(Опционально)</sup><br>
-      <b>only-with-videos</b> - только с видео. <sup>(Опционально)</sup><br>
-      <b>only-with-exchange-available</b> - только с возможностью обмена. <sup>(Опционально)</sup><br>
-      <b>sort-type</b> - <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/blob/4e5eb51e3664c5e4e96812a5e146e41087787484/include/kufar.hpp#L525">тип сортировки</a>. <sup>(Опционально)</sup><br>
-      <b>category</b> - <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/blob/4e5eb51e3664c5e4e96812a5e146e41087787484/include/kufar.hpp#L193">категория</a>. <sup>(Опционально)</sup><br>
-      <b>sub-category</b> - <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/blob/4e5eb51e3664c5e4e96812a5e146e41087787484/include/kufar.hpp#L217">подкатегория</a>. <sup>(Опционально)</sup><br>
-      <b>region</b> - <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/blob/4e5eb51e3664c5e4e96812a5e146e41087787484/include/kufar.hpp#L17">номер региона</a> для поиска объявлений. <sup>(Опционально)</sup><br>
-      <b>areas</b> - <a href="https://github.com/TechUnRestricted/Kufar-Telegram-Notifier/blob/4e5eb51e3664c5e4e96812a5e146e41087787484/include/kufar.hpp#L27">номера областей</a> для поиска объявлений. <sup>(Опционально)</sup>
-   </details>
-   <details>
-      <summary>
-         Delays
-      </summary>
-      <b>query</b> - задержка (в секундах) перед переходом к следующему поисковому запросу.<br>
-      <b>loop</b> - задержка (в секундах) перед повторением поиска по очереди с начала.<br>
-   </details>
-</details>
-<details>
-     <summary>
-         Настройка cached-data.json
-     </summary>
-Настраивать данный файл не нужно.<br>
-Достаточно убедиться в том, что он представляет из себя валидный JSON файл со структурой <code>[]</code> (массив).<br>
-Предназначение: хранит в себе идентификаторы отправленных объявлений для предотвращения повторной отправки при перезапуске программы.
-</details>
-<h2>Запуск:</h2>
-   <p>
-      По умолчанию <code>kufar-configuration.json</code>, <code>cached-data.json</code> и <code>kufar-notifier.log</code>
-      ищутся (а при необходимости создаются) в текущей рабочей папке. Пути можно переопределить аргументами командной строки.
-   </p>
-   <details>
-      <summary>
-         Аргументы командной строки
-      </summary>
-      <code>bin/Kufar-Telegram-Notifier [параметры]</code><br><br>
-      <b>-c, --config &lt;файл&gt;</b> - путь к файлу конфигурации.<br>
-      <b>--cache &lt;файл&gt;</b> - путь к файлу кеша (создаётся автоматически, если отсутствует).<br>
-      <b>-l, --log &lt;файл&gt;</b> - путь к файлу лога.<br>
-      <b>--no-log</b> - не записывать лог в файл (только консоль).<br>
-      <b>--log-level &lt;уровень&gt;</b> - уровень логирования: <code>trace</code>, <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>, <code>critical</code>.<br>
-      <b>-V, --version</b> - показать версию программы.<br>
-      <b>-h, --help</b> - показать справку.
-   </details>
-   <details>
-      <summary>
-         Примеры запуска
-      </summary>
-      <code>bin/Kufar-Telegram-Notifier</code> - файлы по умолчанию в текущей папке.<br>
-      <code>bin/Kufar-Telegram-Notifier --config="/путь/к/kufar-configuration.json" --cache="/путь/к/cached-data.json"</code><br>
-      <code>bin/Kufar-Telegram-Notifier --log=/путь/к/kufar.log --log-level=debug</code>
-   </details>
-<p align="center">
-   <img src="https://user-images.githubusercontent.com/83237609/181288185-7f9c23b0-32bf-4a1a-a3fd-168ed38255e1.png"/>
-</p>
+**English** | [Русский](README.ru.md)
+
+# Kufar Telegram Notifier
+
+A small self-hosted bot that watches [Kufar](https://kufar.by) for new listings and posts them to a Telegram chat. You describe your searches in a JSON file; the bot polls Kufar at a configurable interval and sends every listing it has not seen before. Each search can target its own thread (topic) in a Telegram supergroup, so one bot can run several independent feeds.
+
+> **Disclaimer:** This project is intended for informational and educational purposes only. It is not affiliated with or endorsed by Kufar. Use it at your own risk and in compliance with Kufar's terms of service and applicable law. If you represent Kufar and have concerns about this project, please open an issue in this repository.
+
+## How it works
+
+1. The bot reads `kufar-configuration.json` and runs each entry in `queries` against the Kufar search API.
+2. New listings are sent to the Telegram chat. If a query has `message-thread-id`, its listings go to that topic; otherwise they go to the chat's General topic.
+3. Sent listing IDs are stored in `cached-data.json`, separately for every topic, so the same listing is not posted twice.
+4. After all queries have run, the bot waits for the configured loop delay and starts again. It runs in the foreground until stopped.
+
+Telegram messages produced by the bot are currently written in Russian.
+
+## Requirements
+
+- A C++17 compiler (`g++` or `clang++`)
+- CMake 3.5 or newer
+- libcurl development headers
+- spdlog development headers
+- Git (only needed to clone the repository)
+
+## Building on Linux
+
+Install the dependencies with your distribution's package manager.
+
+Debian / Ubuntu:
+
+```sh
+sudo apt update
+sudo apt install -y build-essential cmake git libcurl4-openssl-dev libspdlog-dev
+```
+
+Fedora:
+
+```sh
+sudo dnf install -y gcc-c++ make cmake git libcurl-devel spdlog-devel
+```
+
+Arch Linux:
+
+```sh
+sudo pacman -S --needed base-devel cmake git curl spdlog
+```
+
+Then clone and build:
+
+```sh
+git clone https://github.com/Am80286/Kufar-Telegram-Notifier-fork.git
+cd Kufar-Telegram-Notifier-fork
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+The executable is written to `build/bin/Kufar-Telegram-Notifier`.
+
+## Building on macOS
+
+Only the command-line toolchain is needed; there is no Xcode project and no IDE step.
+
+```sh
+xcode-select --install
+brew install cmake curl spdlog
+```
+
+If Homebrew is not installed yet, follow the instructions at [brew.sh](https://brew.sh).
+
+Then clone and build:
+
+```sh
+git clone https://github.com/Am80286/Kufar-Telegram-Notifier-fork.git
+cd Kufar-Telegram-Notifier-fork
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+The executable is written to `build/bin/Kufar-Telegram-Notifier`.
+
+If CMake cannot find Homebrew's libcurl or spdlog, pass the Homebrew prefix explicitly:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+cmake --build build --parallel
+```
+
+## Running
+
+The build produces a single executable and does not install anything system-wide. Run it from a directory the user can write to, because the cache and log files are created in the current working directory by default.
+
+```sh
+./build/bin/Kufar-Telegram-Notifier
+```
+
+The program keeps running in the foreground. Stop it with `Ctrl+C`. To keep it running after the terminal closes, use a process manager such as systemd, tmux, or screen.
+
+### Command-line options
+
+| Option | Description |
+| --- | --- |
+| `-c`, `--config <file>` | Path to the configuration file. Default: `kufar-configuration.json` in the current directory. |
+| `--cache <file>` | Path to the cache file. Default: `cached-data.json` in the current directory. Created automatically if missing. |
+| `-l`, `--log <file>` | Path to the log file. Default: `kufar-notifier.log` in the current directory. |
+| `--no-log` | Do not write a log file; log to the console only. |
+| `--log-level <level>` | Log level: `trace`, `debug`, `info`, `warn`, `error`, or `critical`. Default: `info`. |
+| `-V`, `--version` | Print the program version and exit. |
+| `-h`, `--help` | Print usage information and exit. |
+
+Examples:
+
+```sh
+# Use the configuration, cache, and log files in the current directory
+./build/bin/Kufar-Telegram-Notifier
+
+# Use files in another location
+./build/bin/Kufar-Telegram-Notifier \
+  --config /etc/kufar-notifier/kufar-configuration.json \
+  --cache /var/lib/kufar-notifier/cached-data.json \
+  --log /var/log/kufar-notifier.log
+
+# Log to the console only, with debug output
+./build/bin/Kufar-Telegram-Notifier --no-log --log-level debug
+```
+
+## Configuration
+
+The bot reads a JSON file, `kufar-configuration.json` by default. A complete example lives in the repository root. The file has three top-level sections: `telegram`, `queries`, and `delays`.
+
+Minimal example:
+
+```json
+{
+    "telegram": {
+        "bot-token": "1111111111:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "chat-id": -1001234567890
+    },
+    "queries": [
+        {
+            "tag": "iPhone",
+            "message-thread-id": 42,
+            "only-title-search": true,
+            "limit": 10
+        },
+        {
+            "tag": "велосипед",
+            "message-thread-id": 43,
+            "price": {
+                "min": 100,
+                "max": 800
+            },
+            "region": 7
+        }
+    ],
+    "delays": {
+        "query": 10,
+        "loop": 1800
+    }
+}
+```
+
+### Telegram settings
+
+Before configuring the file, create a bot with [@BotFather](https://t.me/BotFather) and add it to the target chat.
+
+| Key | Required | Description |
+| --- | --- | --- |
+| `bot-token` | Yes | The token issued by BotFather. |
+| `chat-id` | Yes | ID of the chat that receives the listings. Group and supergroup IDs are negative, for example `-1001234567890`. |
+
+To send into separate topics, the chat must be a supergroup with **Topics** (also called Forum mode) enabled, and the bot must have permission to post messages there. Add the bot to the supergroup and grant it the necessary admin rights.
+
+You can obtain the chat ID from the Telegram Bot API (`getUpdates`) or with any chat-ID inspection tool. The value must include the minus sign for groups.
+
+### Query settings
+
+Every object in `queries` describes one search feed. All query fields are optional, but a query with no filters at all will simply return Kufar's default results.
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `tag` | string | Search text. Also used as the `#hashtag` at the top of the Telegram message. |
+| `message-thread-id` | integer | Topic ID in the supergroup where this query's listings are posted. Must be positive. If omitted, listings go to the General topic. |
+| `only-title-search` | boolean | Search only in listing titles. |
+| `price` | object | Price range with optional `min` and `max` values, in whole BYN. |
+| `price.min` | integer | Minimum price. |
+| `price.max` | integer | Maximum price. |
+| `language` | string | Search language code, for example `ru`. |
+| `limit` | integer | Maximum number of listings requested per poll. Kufar's default is used when omitted. |
+| `currency` | string | Currency code passed to the Kufar API. The bundled example uses `BYR`. Notifications always display the price in BYN. |
+| `condition` | integer | Item condition: `1` = used, `2` = new. |
+| `seller-type` | integer | Seller type: `0` = private person, `1` = company. |
+| `kufar-delivery-required` | boolean | Only listings with Kufar Delivery. |
+| `kufar-payment-required` | boolean | Only listings with Kufar Payment. |
+| `kufar-halva-required` | boolean | Only listings with Kufar Halva installment. |
+| `only-with-photos` | boolean | Only listings with photos. |
+| `only-with-videos` | boolean | Only listings with videos. |
+| `only-with-exchange-available` | boolean | Only listings that allow exchange. |
+| `sort-type` | integer | Price sorting: `1` = descending, `2` = ascending. |
+| `category` | integer | Main category ID. See the category table below. |
+| `sub-category` | integer | Subcategory ID. See `include/kufar.hpp` for the full list. |
+| `region` | integer | Region ID. See the region table below. |
+| `areas` | array of integers | Area (district/city) IDs to filter by. See `include/kufar.hpp` for the full list. |
+
+Boolean filters are sent to Kufar only when set to `true`. Setting them to `false` is the same as omitting them.
+
+#### Categories
+
+| ID | Category | ID | Category |
+| --- | --- | --- | --- |
+| `1000` | Real estate | `12000` | Everything for children and mothers |
+| `2000` | Cars and transport | `13000` | Services |
+| `3000` | Everything for home | `14000` | Repair and construction |
+| `4000` | Hobbies, sports and tourism | `15000` | Household appliances |
+| `5000` | Electronics | `16000` | Computer equipment |
+| `6000` | Jobs | `17000` | Phones and tablets |
+| `7000` | Other | `18000` | Beauty and health |
+| `8000` | Women's wardrobe | `19000` | Men's wardrobe |
+| `9000` | Wedding and holidays | `20000` | Ready business and equipment |
+| `10000` | Garden | `21000` | Furniture |
+| `11000` | Animals | | |
+
+Some commonly used subcategories:
+
+| ID | Subcategory |
+| --- | --- |
+| `17010` | Mobile phones |
+| `16040` | Laptops |
+| `2010` | Passenger cars |
+| `1010` | Apartments |
+
+The complete list of subcategories and area IDs is defined in [`include/kufar.hpp`](include/kufar.hpp).
+
+#### Regions
+
+| ID | Region |
+| --- | --- |
+| `1` | Brest region |
+| `2` | Gomel region |
+| `3` | Grodno region |
+| `4` | Mogilev region |
+| `5` | Minsk region |
+| `6` | Vitebsk region |
+| `7` | Minsk city |
+
+`region` and `areas` can be used together. For example, `"region": 7` with `"areas": [22, 23, 24]` limits the search to Minsk and those districts.
+
+### Topics and message threads
+
+Each query can post to a different topic. To find a topic's ID, open the topic in Telegram and look at the link of any message inside it:
+
+```text
+https://t.me/c/1234567890/42/123
+```
+
+In this example, `1234567890` is the chat ID without the `-100` prefix and `42` is the topic ID, so the configuration value is `"message-thread-id": 42`.
+
+The cache is kept per topic, not per query. If two queries post to the same topic, a listing is sent only once to that topic. The same listing may still be sent to a different topic. If you delete a topic and create a new one, it receives a new ID and starts with an empty history.
+
+### Delays
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `delays.query` | integer | Seconds to wait after each query before starting the next one. |
+| `delays.loop` | integer | Seconds to wait after the last query before starting the loop again. |
+
+If the whole `delays` section is omitted, the defaults are `5` seconds between queries and `30` seconds between loops. If the section is present, both `query` and `loop` must be set.
+
+## Cache file
+
+`cached-data.json` stores the IDs of listings that were already sent, grouped by topic. It is created automatically and should not be edited while the bot is running. The structure is:
+
+```json
+{
+    "version": 2,
+    "buckets": {
+        "default": [123456789],
+        "42": [123456789, 987654321]
+    }
+}
+```
+
+- `default` contains listings sent to the General topic (queries without `message-thread-id`).
+- `"42"` contains listings sent to the topic with ID 42.
+
+A listing is added to the cache only after Telegram confirms the send. If sending fails, the bot logs the error and retries the listing on the next poll.
+
+To make the bot forget what it has sent, stop it, delete `cached-data.json`, and start it again. A new empty cache will be created automatically. Older cache formats are not migrated; if an old flat-array cache is found, it is ignored with a warning and tracking starts over.
+
+## Logging
+
+By default the bot writes to `kufar-notifier.log` in the current working directory and also prints to the console. Use `--no-log` to disable the file, `--log <file>` to choose another path, and `--log-level <level>` to change verbosity.
+
+## Credits
+
+This project is a fork of [TechUnRestricted/Kufar-Telegram-Notifier](https://github.com/TechUnRestricted/Kufar-Telegram-Notifier). This fork adds per-query Telegram topics, a sent-listing cache split by topic, command-line argument parsing with CLI11, and structured logging with spdlog.
+
+## License
+
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for the full text.
