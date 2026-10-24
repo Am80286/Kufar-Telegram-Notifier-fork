@@ -18,6 +18,26 @@ namespace Networking {
             data->append((char*)ptr, size * nmemb);
             return size * nmemb;
         }
+
+        /**
+          Скрывает токен бота в URL перед выводом в лог,
+          чтобы он не попадал в файл лога в открытом виде.
+         */
+        static string redactBotToken(const string &url) {
+            const string marker = "/bot";
+            const size_t markerPosition = url.find(marker);
+            if (markerPosition == string::npos) {
+                return url;
+            }
+
+            const size_t tokenStart = markerPosition + marker.size();
+            const size_t tokenEnd = url.find('/', tokenStart);
+            if (tokenEnd == string::npos) {
+                return url;
+            }
+
+            return url.substr(0, tokenStart) + "***" + url.substr(tokenEnd);
+        }
     }
 
     string urlEncode(const string &text) {
@@ -30,7 +50,7 @@ namespace Networking {
     }
 
     string getJSONFromURL(const string &url) {
-        DEBUG_MSG("[URL: {}]", url);
+        DEBUG_MSG("[URL: {}]", redactBotToken(url));
         
         //curl_global_init(CURL_GLOBAL_DEFAULT);
         auto curl = curl_easy_init();

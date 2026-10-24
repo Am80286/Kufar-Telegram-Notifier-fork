@@ -6,6 +6,7 @@
     "queries": [
         {
             "tag": "iPhone",
+            "message-thread-id": 42,
             "only-title-search": true,
             "limit": 5,
             "region": 7,

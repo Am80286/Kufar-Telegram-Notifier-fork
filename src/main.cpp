@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <fstream>
+#include <map>
 #include <vector>
 
 #include "spdlog/spdlog.h"
@@ -31,6 +32,9 @@ const string DEFAULT_CACHE_FILE_NAME = "cached-data.json";
 const string DEFAULT_CONFIGURATION_FILE_NAME = "kufar-configuration.json";
 const string DEFAULT_LOG_FILE_NAME = "kufar-notifier.log";
 
+const int CACHE_VERSION = 2;
+const string DEFAULT_CACHE_BUCKET = "default";
+
 struct ConfigurationFile {
     string path;
     json contents;
@@ -46,8 +50,32 @@ struct Files {
     CacheFile cache;
 };
 
+/**
+  Поисковый запрос вместе с настройками его доставки в Telegram.
+  messageThreadID отсутствует, если объявления должны идти в основной чат.
+ */
+struct QueryConfiguration {
+    Kufar::KufarConfiguration kufar;
+    optional<int> messageThreadID;
+
+    /**
+      Ключ кеша — тема (topic), а не сам запрос.
+      Несколько запросов могут публиковаться в одну тему, и в этом случае
+      объявление не должно отправляться в неё повторно.
+      "default" — основной чат / тема "General".
+     */
+    string cacheKey() const {
+        return messageThreadID.has_value() ? to_string(messageThreadID.value()) : DEFAULT_CACHE_BUCKET;
+    }
+};
+
+/**
+  Кеш отправленных объявлений: ключ — тема чата, значение — ID объявлений.
+ */
+using CacheBuckets = map<string, vector<int>>;
+
 struct ProgramConfiguration {
-    vector<KufarConfiguration> kufarConfiguration;
+    vector<QueryConfiguration> queries;
     TelegramConfiguration telegramConfiguration;
     Files files;
     
@@ -64,7 +92,6 @@ void loadJSONConfigurationData(const json &data, ProgramConfiguration &programCo
     {
         json queriesData = data.at("queries");
         
-        unsigned int index = 0;
         for (const json &query : queriesData) {
             KufarConfiguration kufarConfiguration;
             
@@ -92,9 +119,19 @@ void loadJSONConfigurationData(const json &data, ProgramConfiguration &programCo
             kufarConfiguration.subCategory = getOptionalValue<int>(query, "sub-category");
             kufarConfiguration.region = getOptionalValue<Region>(query, "region");
             kufarConfiguration.areas = getOptionalValue<vector<int>>(query, "areas");
-            programConfiguration.kufarConfiguration.push_back(kufarConfiguration);
-            
-            index += 1;
+
+            QueryConfiguration queryConfiguration;
+            queryConfiguration.kufar = kufarConfiguration;
+            queryConfiguration.messageThreadID = getOptionalValue<int>(query, "message-thread-id");
+
+            if (queryConfiguration.messageThreadID.has_value() && queryConfiguration.messageThreadID.value() <= 0) {
+                throw runtime_error(
+                    "\"message-thread-id\" должен быть положительным числом (ID темы чата), "
+                    "либо отсутствовать, чтобы публиковать в основной чат."
+                );
+            }
+
+            programConfiguration.queries.push_back(queryConfiguration);
         }
     }
     {
@@ -129,14 +166,15 @@ void printJSONConfigurationData(const ProgramConfiguration &programConfiguration
         "\n- Telegram:\n"
         "\t- Токен: {}\n"
         "\t- ID Чата: {}\n",
-        programConfiguration.telegramConfiguration.botToken,
+        maskToken(programConfiguration.telegramConfiguration.botToken),
         programConfiguration.telegramConfiguration.chatID
     );
     
-    for (const auto &query : programConfiguration.kufarConfiguration) {
+    for (const auto &query : programConfiguration.queries) {
         spdlog::info(
             "\n- Добавлен запрос:\n"
             "\t- Название: {}\n"
+            "\t- ID темы чата: {}\n"
             "\t- Поиск только по заголовку: {}\n"
             "\t- Цена:\n"
             "\t\t- Минимальная: {} BYN\n"
@@ -157,26 +195,27 @@ void printJSONConfigurationData(const ProgramConfiguration &programConfiguration
             "\t- Подкатегория: {}\n"
             "\t- Город: {}\n"
             "\t- Район: {}\n",
-            toString(query.tag),
-            toString(query.onlyTitleSearch),
-            toString(query.priceRange.priceMin),
-            toString(query.priceRange.priceMax),
-            toString(query.language),
-            toString(query.limit),
-            toString(query.currency),
-            (query.condition.has_value() ? EnumString::itemCondition(query.condition.value()) : PROPERTY_UNDEFINED),
-            (query.sellerType.has_value() ? EnumString::sellerType(query.sellerType.value()) : PROPERTY_UNDEFINED),
-            toString(query.kufarDeliveryRequired),
-            toString(query.kufarPaymentRequired),
-            toString(query.kufarHalvaRequired),
-            toString(query.onlyWithPhotos),
-            toString(query.onlyWithVideos),
-            toString(query.onlyWithExchangeAvailable),
-            (query.sortType.has_value() ? EnumString::sortType(query.sortType.value()) : PROPERTY_UNDEFINED),
-            (query.category.has_value() ? EnumString::category(query.category.value()) : PROPERTY_UNDEFINED),
-            (query.subCategory.has_value() ? EnumString::subCategory(query.subCategory.value()) : PROPERTY_UNDEFINED),
-            (query.region.has_value() ? EnumString::region(query.region.value()) : PROPERTY_UNDEFINED),
-            joinAreas(query.areas)
+            toString(query.kufar.tag),
+            (query.messageThreadID.has_value() ? toString(query.messageThreadID) : "[основной чат]"),
+            toString(query.kufar.onlyTitleSearch),
+            toString(query.kufar.priceRange.priceMin),
+            toString(query.kufar.priceRange.priceMax),
+            toString(query.kufar.language),
+            toString(query.kufar.limit),
+            toString(query.kufar.currency),
+            (query.kufar.condition.has_value() ? EnumString::itemCondition(query.kufar.condition.value()) : PROPERTY_UNDEFINED),
+            (query.kufar.sellerType.has_value() ? EnumString::sellerType(query.kufar.sellerType.value()) : PROPERTY_UNDEFINED),
+            toString(query.kufar.kufarDeliveryRequired),
+            toString(query.kufar.kufarPaymentRequired),
+            toString(query.kufar.kufarHalvaRequired),
+            toString(query.kufar.onlyWithPhotos),
+            toString(query.kufar.onlyWithVideos),
+            toString(query.kufar.onlyWithExchangeAvailable),
+            (query.kufar.sortType.has_value() ? EnumString::sortType(query.kufar.sortType.value()) : PROPERTY_UNDEFINED),
+            (query.kufar.category.has_value() ? EnumString::category(query.kufar.category.value()) : PROPERTY_UNDEFINED),
+            (query.kufar.subCategory.has_value() ? EnumString::subCategory(query.kufar.subCategory.value()) : PROPERTY_UNDEFINED),
+            (query.kufar.region.has_value() ? EnumString::region(query.kufar.region.value()) : PROPERTY_UNDEFINED),
+            joinAreas(query.kufar.areas)
         );
     }
 
@@ -209,6 +248,64 @@ json getJSONDataFromPath(const string &JSONFilePath) {
 
 }
 
+/**
+  Представление кеша в JSON:
+  {
+      "version": 2,
+      "buckets": {
+          "default": [1, 2, 3],
+          "42": [1, 2]
+      }
+  }
+ */
+json cacheBucketsToJSON(const CacheBuckets &cacheBuckets) {
+    json bucketsData = json::object();
+    for (const auto &[cacheKey, adIDs] : cacheBuckets) {
+        bucketsData[cacheKey] = adIDs;
+    }
+
+    return json{
+        {"version", CACHE_VERSION},
+        {"buckets", bucketsData}
+    };
+}
+
+CacheBuckets loadCacheBuckets(const json &data) {
+    CacheBuckets cacheBuckets;
+
+    if (data.is_array()) {
+        // Устаревший формат (плоский массив). Автоматически не переносим:
+        // лучше начать с чистого кеша, чем пропустить новые объявления.
+        if (!data.empty()) {
+            spdlog::warn(
+                "[Кеш] Обнаружен устаревший формат кеша (плоский массив). "
+                "Идентификаторы проигнорированы, кеш будет создан заново."
+            );
+        }
+        return cacheBuckets;
+    }
+
+    if (!data.is_object() || !data.contains("buckets")) {
+        throw runtime_error("Некорректный формат файла кеша: ожидается объект с полем \"buckets\".");
+    }
+
+    const int version = data.value("version", CACHE_VERSION);
+    if (version > CACHE_VERSION) {
+        throw runtime_error("Файл кеша создан более новой версией программы (version " + to_string(version) + ").");
+    }
+
+    const json &bucketsData = data.at("buckets");
+    if (!bucketsData.is_object()) {
+        throw runtime_error("Некорректный формат файла кеша: поле \"buckets\" должно быть объектом.");
+    }
+
+    for (const auto &[cacheKey, adIDs] : bucketsData.items()) {
+        cacheBuckets[cacheKey] = adIDs.get<vector<int>>();
+    }
+
+    return cacheBuckets;
+}
+
 void createEmptyCacheFile(const string &path) {
     spdlog::info("[Кеш] Файл не найден, создаю новый: \"{}\"", path);
 
@@ -216,7 +313,7 @@ void createEmptyCacheFile(const string &path) {
     if (!cacheFile) {
         throw runtime_error("Не удалось создать файл кеша: \"" + path + "\"");
     }
-    cacheFile << "[]";
+    cacheFile << cacheBucketsToJSON(CacheBuckets()).dump();
     cacheFile.close();
 
     if (!cacheFile) {
@@ -286,33 +383,42 @@ int main(int argc, char **argv) {
     }
 
     ProgramConfiguration programConfiguration;
-    vector<int> viewedAds;
+    CacheBuckets cacheBuckets;
 
     try {
         programConfiguration.files = loadFiles(options);
         loadJSONConfigurationData(programConfiguration.files.configuration.contents, programConfiguration);
         printJSONConfigurationData(programConfiguration);
-        viewedAds = programConfiguration.files.cache.contents.get<vector<int>>();
+        cacheBuckets = loadCacheBuckets(programConfiguration.files.cache.contents);
     } catch (const exception &exc) {
         spdlog::error("{}", exc.what());
         return 1;
     }
 
     while (true) {
-        for (auto requestConfiguration : programConfiguration.kufarConfiguration) {
-            unsigned int sentCount = 0;
+        for (const auto &requestConfiguration : programConfiguration.queries) {
+            const string cacheKey = requestConfiguration.cacheKey();
+            vector<int> &viewedAds = cacheBuckets[cacheKey];
             
             try {
-                for (const auto &advert : getAds(requestConfiguration)) {
+                for (const auto &advert : getAds(requestConfiguration.kufar)) {
                     if (!vectorContains(viewedAds, advert.id)) {
-                        spdlog::info("[New]: Adding [Title: {}], [ID: {}], [Tag: {}], [Link: {}]", advert.title, advert.id, advert.tag.value_or(PROPERTY_UNDEFINED), advert.link);
-                        viewedAds.push_back(advert.id);
-                        sentCount += 1;
+                        spdlog::info(
+                            "[New]: Adding [Title: {}], [ID: {}], [Tag: {}], [Topic: {}], [Link: {}]",
+                            advert.title,
+                            advert.id,
+                            advert.tag.value_or(PROPERTY_UNDEFINED),
+                            cacheKey,
+                            advert.link
+                        );
 
                         try {
-                            sendAdvert(programConfiguration.telegramConfiguration, advert);
+                            sendAdvert(programConfiguration.telegramConfiguration, advert, requestConfiguration.messageThreadID);
+                            // В кеш попадают только действительно отправленные объявления.
+                            viewedAds.push_back(advert.id);
+                            saveFile(programConfiguration.files.cache.path, cacheBucketsToJSON(cacheBuckets).dump());
                         } catch (const exception &exc) {
-                            spdlog::error("(sendAdvert): {}", exc.what());
+                            spdlog::error("(sendAdvert) [Topic: {}]: {}", cacheKey, exc.what());
                         }
                         
                     } else {
@@ -325,10 +431,6 @@ int main(int argc, char **argv) {
             }
             DEBUG_MSG("(QueryDelay) Sleeping for: {}s.", programConfiguration.queryDelaySeconds);
             sleep(programConfiguration.queryDelaySeconds);
-            
-            if (sentCount > 0) {
-                saveFile(programConfiguration.files.cache.path, ((json)viewedAds).dump());
-            }
         }
         DEBUG_MSG("(LoopDelay) Sleeping for: {}s.", programConfiguration.loopDelaySeconds);
         sleep(programConfiguration.loopDelaySeconds);

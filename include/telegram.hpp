@@ -8,12 +8,24 @@
 #ifndef Header_hpp
 #define Header_hpp
 
+#include <cstdint>
+#include <optional>
+#include <string>
+
+#include "kufar.hpp"
+
 namespace Telegram {
     struct TelegramConfiguration {
         std::string botToken;
-        uint64_t chatID;
+        // ID супергруппы/чата. Отрицательный для групп и каналов.
+        int64_t chatID = 0;
     };
 
-    void sendAdvert(const TelegramConfiguration &, const Kufar::Ad &);
+    /**
+      Отправка объявления в чат.
+      Если messageThreadID задан, объявление публикуется в соответствующую
+      тему (topic) форума, иначе — в основной чат / тему "General".
+     */
+    void sendAdvert(const TelegramConfiguration &, const Kufar::Ad &, std::optional<int> messageThreadID);
 };
 #endif /* Header_hpp */

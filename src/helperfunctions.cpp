@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <spdlog/spdlog.h>
 
+#include "helperfunctions.hpp"
+
 using namespace std;
 
 bool vectorContains(const vector<int> &vector, const int &value) {
@@ -74,9 +76,30 @@ bool stringHasPrefix(const string &originalString, const string &prefix) {
 
 void saveFile(const string &path, const string &contents) {
     // Перезапись файла [ВКЛ]
-    spdlog::info("[Сохранение идентификаторов отправленных объявлений]");
+    spdlog::debug("[Сохранение идентификаторов отправленных объявлений]");
     ofstream ofs(path, ofstream::trunc);
     ofs << contents;
     ofs.close();
+}
+
+string maskToken(const string &token) {
+    if (token.empty()) {
+        return PROPERTY_UNDEFINED;
+    }
+
+    const size_t separator = token.find(':');
+    if (separator == string::npos) {
+        // Неизвестный формат: оставляем только последние 4 символа.
+        if (token.size() <= 4) {
+            return string(token.size(), '*');
+        }
+        return "***" + token.substr(token.size() - 4);
+    }
+
+    const string botID = token.substr(0, separator);
+    const string secret = token.substr(separator + 1);
+    const string tail = secret.size() > 4 ? secret.substr(secret.size() - 4) : secret;
+
+    return botID + ":***" + tail;
 }
 
