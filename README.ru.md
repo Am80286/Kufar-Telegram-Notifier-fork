@@ -12,16 +12,19 @@
 2. Новые объявления отправляются в Telegram-чат. Если у запроса указан `message-thread-id`, объявления публикуются в эту тему; иначе они попадают в основную тему (General) чата.
 3. ID отправленных объявлений сохраняются в `cached-data.json` отдельно для каждой темы, поэтому одно и то же объявление не публикуется дважды.
 4. После выполнения всех запросов бот ждёт заданную задержку и начинает заново. Он работает в foreground до остановки.
+5. Параллельно бот получает обновления Telegram через long polling. Публичный IP и webhook не нужны; сейчас бот отвечает на `/start` и `/ping`.
 
 Тексты сообщений, отправляемых ботом, сейчас написаны на русском языке.
 
 ## Требования
 
-- Компилятор C++17 (`g++` или `clang++`)
-- CMake 3.5 или новее
+- Компилятор C++20 (`g++` или `clang++`)
+- CMake 3.16 или новее
 - Заголовочные файлы libcurl
 - Заголовочные файлы spdlog
-- Git (нужен только для клонирования репозитория)
+- Заголовочные файлы Boost
+- Заголовочные файлы nlohmann-json
+- Git и доступ к сети при первой конфигурации (tgbot-cpp скачивается автоматически)
 
 ## Сборка в Linux
 
@@ -31,19 +34,19 @@ Debian / Ubuntu:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential cmake git libcurl4-openssl-dev libspdlog-dev
+sudo apt install -y build-essential cmake git libcurl4-openssl-dev libspdlog-dev libboost-dev nlohmann-json3-dev
 ```
 
 Fedora:
 
 ```sh
-sudo dnf install -y gcc-c++ make cmake git libcurl-devel spdlog-devel
+sudo dnf install -y gcc-c++ make cmake git libcurl-devel spdlog-devel boost-devel json-devel
 ```
 
 Arch Linux:
 
 ```sh
-sudo pacman -S --needed base-devel cmake git curl spdlog
+sudo pacman -S --needed base-devel cmake git curl spdlog boost nlohmann-json
 ```
 
 Затем склонируйте репозиторий и соберите проект:
@@ -57,13 +60,15 @@ cmake --build build --parallel
 
 Исполняемый файл появится в `build/bin/Kufar-Telegram-Notifier`.
 
+При первой конфигурации tgbot-cpp v1.13 скачивается в `build/_deps`, поэтому устанавливать библиотеку в систему не нужно. При последующих сборках используется уже скачанная копия, и сеть не требуется. Если исходники библиотеки уже есть локально, передайте `-DFETCHCONTENT_SOURCE_DIR_TGBOT_CPP=/путь/к/tgbot-cpp` в команду конфигурации.
+
 ## Сборка в macOS
 
 Нужен только инструментарий командной строки; отдельного Xcode-проекта и шагов в IDE нет.
 
 ```sh
 xcode-select --install
-brew install cmake curl spdlog
+brew install cmake boost nlohmann-json curl spdlog
 ```
 
 Если Homebrew ещё не установлен, следуйте инструкциям на [brew.sh](https://brew.sh).
@@ -79,7 +84,7 @@ cmake --build build --parallel
 
 Исполняемый файл появится в `build/bin/Kufar-Telegram-Notifier`.
 
-Если CMake не находит libcurl или spdlog из Homebrew, укажите префикс Homebrew явно:
+Если CMake не находит Boost, libcurl, nlohmann-json или spdlog из Homebrew, укажите префикс Homebrew явно:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
@@ -123,6 +128,15 @@ cmake --build build --parallel
 # Логировать только в консоль, с отладочным выводом
 ./build/bin/Kufar-Telegram-Notifier --no-log --log-level debug
 ```
+
+### Команды Telegram
+
+Бот получает команды через long polling (`getUpdates`), поэтому публичный IP-адрес и webhook не нужны. Ответ отправляется в тот чат и тему, откуда пришла команда.
+
+| Команда | Описание |
+| --- | --- |
+| `/start` | Показать краткое описание бота. |
+| `/ping` | Ответить `pong`; удобно для проверки, что polling работает. |
 
 ## Конфигурация
 
@@ -293,7 +307,7 @@ https://t.me/c/1234567890/42/123
 
 ## Благодарности
 
-Этот проект является форком [TechUnRestricted/Kufar-Telegram-Notifier](https://github.com/TechUnRestricted/Kufar-Telegram-Notifier). В этом форке добавлены отдельные темы Telegram для каждого запроса, кеш отправленных объявлений с разделением по темам, разбор аргументов командной строки с помощью CLI11 и структурированное логирование с помощью spdlog.
+Этот проект является форком [TechUnRestricted/Kufar-Telegram-Notifier](https://github.com/TechUnRestricted/Kufar-Telegram-Notifier). В этом форке добавлены отдельные темы Telegram для каждого запроса, кеш отправленных объявлений с разделением по темам, разбор аргументов командной строки с помощью CLI11, структурированное логирование с помощью spdlog, а также интеграция с Telegram Bot API через [tgbot-cpp](https://github.com/reo7sp/tgbot-cpp) с long polling.
 
 ## Лицензия
 

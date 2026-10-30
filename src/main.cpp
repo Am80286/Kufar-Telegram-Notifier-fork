@@ -50,28 +50,15 @@ struct Files {
     CacheFile cache;
 };
 
-/**
-  Поисковый запрос вместе с настройками его доставки в Telegram.
-  messageThreadID отсутствует, если объявления должны идти в основной чат.
- */
 struct QueryConfiguration {
     Kufar::KufarConfiguration kufar;
     optional<int> messageThreadID;
 
-    /**
-      Ключ кеша — тема (topic), а не сам запрос.
-      Несколько запросов могут публиковаться в одну тему, и в этом случае
-      объявление не должно отправляться в неё повторно.
-      "default" — основной чат / тема "General".
-     */
     string cacheKey() const {
         return messageThreadID.has_value() ? to_string(messageThreadID.value()) : DEFAULT_CACHE_BUCKET;
     }
 };
 
-/**
-  Кеш отправленных объявлений: ключ — тема чата, значение — ID объявлений.
- */
 using CacheBuckets = map<string, vector<int>>;
 
 struct ProgramConfiguration {
@@ -249,7 +236,7 @@ json getJSONDataFromPath(const string &JSONFilePath) {
 }
 
 /**
-  Представление кеша в JSON:
+  What the json cache looks like:
   {
       "version": 2,
       "buckets": {
@@ -274,8 +261,6 @@ CacheBuckets loadCacheBuckets(const json &data) {
     CacheBuckets cacheBuckets;
 
     if (data.is_array()) {
-        // Устаревший формат (плоский массив). Автоматически не переносим:
-        // лучше начать с чистого кеша, чем пропустить новые объявления.
         if (!data.empty()) {
             spdlog::warn(
                 "[Кеш] Обнаружен устаревший формат кеша (плоский массив). "
@@ -320,11 +305,6 @@ void createEmptyCacheFile(const string &path) {
         throw runtime_error("Не удалось записать файл кеша: \"" + path + "\"");
     }
 }
-
-/**
-  Загрузка файлов конфигурации и кеша.
-  Отсутствующий файл кеша создаётся автоматически.
- */
 
 Files loadFiles(const arguments::Options &options) {
     Files files;
@@ -371,7 +351,6 @@ int main(int argc, char **argv) {
 
     spdlog::cfg::load_env_levels();
     if (options.logLevelExplicit) {
-        // Явно указанный в командной строке уровень важнее SPDLOG_LEVEL.
         spdlog::set_level(options.logLevel);
     }
 
@@ -395,6 +374,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    Telegram::Client telegramClient(programConfiguration.telegramConfiguration);
+    telegramClient.startPolling();
+
     while (true) {
         for (const auto &requestConfiguration : programConfiguration.queries) {
             const string cacheKey = requestConfiguration.cacheKey();
@@ -413,8 +395,8 @@ int main(int argc, char **argv) {
                         );
 
                         try {
-                            sendAdvert(programConfiguration.telegramConfiguration, advert, requestConfiguration.messageThreadID);
-                            // В кеш попадают только действительно отправленные объявления.
+                            telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID);
+                            // Only ads that were actually sent are added to the cache.
                             viewedAds.push_back(advert.id);
                             saveFile(programConfiguration.files.cache.path, cacheBucketsToJSON(cacheBuckets).dump());
                         } catch (const exception &exc) {
