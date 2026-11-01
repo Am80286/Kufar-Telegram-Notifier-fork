@@ -15,8 +15,10 @@
 #include <spdlog/spdlog.h>
 
 #include "helperfunctions.hpp"
+#include "kufar.hpp"
 
 using namespace std;
+using namespace Kufar;
 
 bool vectorContains(const vector<int> &vector, const int &value) {
     if (find(vector.begin(), vector.end(), value) != vector.end()) {
@@ -75,8 +77,6 @@ bool stringHasPrefix(const string &originalString, const string &prefix) {
 }
 
 void saveFile(const string &path, const string &contents) {
-    // Перезапись файла [ВКЛ]
-    spdlog::debug("[Сохранение идентификаторов отправленных объявлений]");
     ofstream ofs(path, ofstream::trunc);
     ofs << contents;
     ofs.close();
@@ -102,4 +102,3 @@ string maskToken(const string &token) {
 
     return botID + ":***" + tail;
 }
-

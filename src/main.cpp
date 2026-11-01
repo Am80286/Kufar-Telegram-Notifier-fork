@@ -22,10 +22,12 @@
 #include "helperfunctions.hpp"
 #include "logging.hpp"
 #include "arguments.hpp"
+#include "queries.hpp"
 
 using namespace std;
 using namespace Kufar;
 using namespace Telegram;
+using namespace queries;
 using nlohmann::json;
 
 const string DEFAULT_CACHE_FILE_NAME = "cached-data.json";
@@ -33,7 +35,6 @@ const string DEFAULT_CONFIGURATION_FILE_NAME = "kufar-configuration.json";
 const string DEFAULT_LOG_FILE_NAME = "kufar-notifier.log";
 
 const int CACHE_VERSION = 2;
-const string DEFAULT_CACHE_BUCKET = "default";
 
 struct ConfigurationFile {
     string path;
@@ -50,19 +51,9 @@ struct Files {
     CacheFile cache;
 };
 
-struct QueryConfiguration {
-    Kufar::KufarConfiguration kufar;
-    optional<int> messageThreadID;
-
-    string cacheKey() const {
-        return messageThreadID.has_value() ? to_string(messageThreadID.value()) : DEFAULT_CACHE_BUCKET;
-    }
-};
-
 using CacheBuckets = map<string, vector<int>>;
 
 struct ProgramConfiguration {
-    vector<QueryConfiguration> queries;
     TelegramConfiguration telegramConfiguration;
     Files files;
     
@@ -77,75 +68,12 @@ void loadJSONConfigurationData(const json &data, ProgramConfiguration &programCo
         programConfiguration.telegramConfiguration.chatID = telegramData.at("chat-id");
     }
     {
-        json queriesData = data.at("queries");
-        
-        for (const json &query : queriesData) {
-            KufarConfiguration kufarConfiguration;
-            
-            kufarConfiguration.onlyTitleSearch = getOptionalValue<bool>(query, "only-title-search");
-            kufarConfiguration.tag = getOptionalValue<string>(query, "tag");
-            if (query.contains("price")) {
-                json queryPriceData = query.at("price");
-                kufarConfiguration.priceRange.priceMin = getOptionalValue<int>(queryPriceData, "min");
-                kufarConfiguration.priceRange.priceMax = getOptionalValue<int>(queryPriceData, "max");
-            }
-            
-            kufarConfiguration.language = getOptionalValue<string>(query, "language");
-            kufarConfiguration.limit = getOptionalValue<int>(query, "limit");
-            kufarConfiguration.currency = getOptionalValue<string>(query, "currency");
-            kufarConfiguration.condition = getOptionalValue<ItemCondition>(query, "condition");
-            kufarConfiguration.sellerType = getOptionalValue<SellerType>(query, "seller-type");
-            kufarConfiguration.kufarDeliveryRequired = getOptionalValue<bool>(query, "kufar-delivery-required");
-            kufarConfiguration.kufarPaymentRequired = getOptionalValue<bool>(query, "kufar-payment-required");
-            kufarConfiguration.kufarHalvaRequired = getOptionalValue<bool>(query, "kufar-halva-required");
-            kufarConfiguration.onlyWithPhotos = getOptionalValue<bool>(query, "only-with-photos");
-            kufarConfiguration.onlyWithVideos = getOptionalValue<bool>(query, "only-with-videos");
-            kufarConfiguration.onlyWithExchangeAvailable = getOptionalValue<bool>(query, "only-with-exchange-available");
-            kufarConfiguration.sortType = getOptionalValue<SortType>(query, "sort-type");
-            kufarConfiguration.category = getOptionalValue<Category>(query, "category");
-            kufarConfiguration.subCategory = getOptionalValue<int>(query, "sub-category");
-            kufarConfiguration.region = getOptionalValue<Region>(query, "region");
-            kufarConfiguration.areas = getOptionalValue<vector<int>>(query, "areas");
-
-            QueryConfiguration queryConfiguration;
-            queryConfiguration.kufar = kufarConfiguration;
-            queryConfiguration.messageThreadID = getOptionalValue<int>(query, "message-thread-id");
-
-            if (queryConfiguration.messageThreadID.has_value() && queryConfiguration.messageThreadID.value() <= 0) {
-                throw runtime_error(
-                    "\"message-thread-id\" должен быть положительным числом (ID темы чата), "
-                    "либо отсутствовать, чтобы публиковать в основной чат."
-                );
-            }
-
-            programConfiguration.queries.push_back(queryConfiguration);
-        }
-    }
-    {
         if (data.contains("delays")) {
             json delaysData = data.at("delays");
             programConfiguration.queryDelaySeconds = delaysData.at("query");
             programConfiguration.loopDelaySeconds = delaysData.at("loop");
         }
     }
-}
-
-std::string joinAreas(const std::optional<std::vector<int>> &areas) {
-    if (!areas.has_value()) {
-        return PROPERTY_UNDEFINED;
-    }
-    
-    std::string joinedAreas;
-    const std::vector<int> &values = areas.value();
-    
-    for (size_t i = 0; i < values.size(); i++) {
-        if (i > 0) {
-            joinedAreas += ", ";
-        }
-        joinedAreas += EnumString::area(values[i]);
-    }
-    
-    return joinedAreas;
 }
 
 void printJSONConfigurationData(const ProgramConfiguration &programConfiguration) {
@@ -157,55 +85,6 @@ void printJSONConfigurationData(const ProgramConfiguration &programConfiguration
         programConfiguration.telegramConfiguration.chatID
     );
     
-    for (const auto &query : programConfiguration.queries) {
-        spdlog::info(
-            "\n- Добавлен запрос:\n"
-            "\t- Название: {}\n"
-            "\t- ID темы чата: {}\n"
-            "\t- Поиск только по заголовку: {}\n"
-            "\t- Цена:\n"
-            "\t\t- Минимальная: {} BYN\n"
-            "\t\t- Максимальная: {} BYN\n"
-            "\t- Язык: {}\n"
-            "\t- Макс. кол-во объявлений за один запрос: {}\n"
-            "\t- Валюта: {}\n"
-            "\t- Состояние: {}\n"
-            "\t- Продавец: {}\n"
-            "\t- Только с Kufar Доставкой: {}\n"
-            "\t- Только с Kufar Оплатой: {}\n"
-            "\t- Только с Kufar Рассрочкой (Халва): {}\n"
-            "\t- Только с фото: {}\n"
-            "\t- Только с видео: {}\n"
-            "\t- Только с возможностью обмена: {}\n"
-            "\t- Тип сортировки: {}\n"
-            "\t- Категория: {}\n"
-            "\t- Подкатегория: {}\n"
-            "\t- Город: {}\n"
-            "\t- Район: {}\n",
-            toString(query.kufar.tag),
-            (query.messageThreadID.has_value() ? toString(query.messageThreadID) : "[основной чат]"),
-            toString(query.kufar.onlyTitleSearch),
-            toString(query.kufar.priceRange.priceMin),
-            toString(query.kufar.priceRange.priceMax),
-            toString(query.kufar.language),
-            toString(query.kufar.limit),
-            toString(query.kufar.currency),
-            (query.kufar.condition.has_value() ? EnumString::itemCondition(query.kufar.condition.value()) : PROPERTY_UNDEFINED),
-            (query.kufar.sellerType.has_value() ? EnumString::sellerType(query.kufar.sellerType.value()) : PROPERTY_UNDEFINED),
-            toString(query.kufar.kufarDeliveryRequired),
-            toString(query.kufar.kufarPaymentRequired),
-            toString(query.kufar.kufarHalvaRequired),
-            toString(query.kufar.onlyWithPhotos),
-            toString(query.kufar.onlyWithVideos),
-            toString(query.kufar.onlyWithExchangeAvailable),
-            (query.kufar.sortType.has_value() ? EnumString::sortType(query.kufar.sortType.value()) : PROPERTY_UNDEFINED),
-            (query.kufar.category.has_value() ? EnumString::category(query.kufar.category.value()) : PROPERTY_UNDEFINED),
-            (query.kufar.subCategory.has_value() ? EnumString::subCategory(query.kufar.subCategory.value()) : PROPERTY_UNDEFINED),
-            (query.kufar.region.has_value() ? EnumString::region(query.kufar.region.value()) : PROPERTY_UNDEFINED),
-            joinAreas(query.kufar.areas)
-        );
-    }
-
     spdlog::info(
         "\n- Задержки:\n"
         "\t- Перед новым запросом: {}с. \n"
@@ -236,7 +115,7 @@ json getJSONDataFromPath(const string &JSONFilePath) {
 }
 
 /**
-  What the json cache looks like:
+  Cache representation in JSON:
   {
       "version": 2,
       "buckets": {
@@ -363,22 +242,33 @@ int main(int argc, char **argv) {
 
     ProgramConfiguration programConfiguration;
     CacheBuckets cacheBuckets;
+    optional<QueryStore> queryStoreStorage;
 
     try {
         programConfiguration.files = loadFiles(options);
         loadJSONConfigurationData(programConfiguration.files.configuration.contents, programConfiguration);
         printJSONConfigurationData(programConfiguration);
         cacheBuckets = loadCacheBuckets(programConfiguration.files.cache.contents);
+        queryStoreStorage.emplace(programConfiguration.files.configuration.path, programConfiguration.files.configuration.contents);
     } catch (const exception &exc) {
         spdlog::error("{}", exc.what());
         return 1;
+    }
+
+    QueryStore &queryStore = *queryStoreStorage;
+    
+    for (const QueryConfiguration &query : queryStore.getQueries()) {
+        spdlog::info(
+            "\n- Добавлен запрос:\n {}", 
+            query.getDescription()
+        );
     }
 
     Telegram::Client telegramClient(programConfiguration.telegramConfiguration);
     telegramClient.startPolling();
 
     while (true) {
-        for (const auto &requestConfiguration : programConfiguration.queries) {
+        for (const auto &requestConfiguration : queryStore.getQueries()) {
             const string cacheKey = requestConfiguration.cacheKey();
             vector<int> &viewedAds = cacheBuckets[cacheKey];
             
