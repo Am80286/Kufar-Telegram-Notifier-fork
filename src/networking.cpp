@@ -6,6 +6,9 @@
 //
 
 #include <iostream>
+#include <memory>
+#include <stdexcept>
+
 #include <curl/curl.h>
 #include "networking.hpp"
 #include "helperfunctions.hpp"
@@ -14,9 +17,29 @@ namespace Networking {
     using std::string;
 
     namespace {
-        static size_t writeFunction(void *ptr, size_t size, size_t nmemb, string *data) {
-            data->append((char*)ptr, size * nmemb);
-            return size * nmemb;
+        struct ResponseData {
+            string body;
+            size_t maxSize = 0;
+            bool sizeExceeded = false;
+        };
+
+        static size_t writeFunction(void *ptr, size_t size, size_t nmemb, ResponseData *data) {
+            const size_t bytes = size * nmemb;
+            if (data->maxSize > 0 &&
+                (data->body.size() >= data->maxSize || bytes > data->maxSize - data->body.size())) {
+                data->sizeExceeded = true;
+                return 0;
+            }
+
+            data->body.append(static_cast<char *>(ptr), bytes);
+            return bytes;
+        }
+
+        void initializeCurl() {
+            static const CURLcode result = curl_global_init(CURL_GLOBAL_DEFAULT);
+            if (result != CURLE_OK) {
+                throw std::runtime_error("Unable to initialize libcurl.");
+            }
         }
 
         /**
@@ -49,31 +72,53 @@ namespace Networking {
         return tempVariable;
     }
 
-    string getJSONFromURL(const string &url) {
+    string getTextFromURL(const string &url, size_t maxResponseSize) {
         DEBUG_MSG("[URL: {}]", redactBotToken(url));
-        
-        //curl_global_init(CURL_GLOBAL_DEFAULT);
-        auto curl = curl_easy_init();
-        string responseString;
-        
-        if (curl) {
-            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
-            curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 0L);
-            curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
-            
-            string headerString;
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeFunction);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseString);
-            curl_easy_setopt(curl, CURLOPT_HEADERDATA, &headerString);
-            
-            curl_easy_perform(curl);
-            curl_easy_cleanup(curl);
-            curl_global_cleanup();
-            curl = NULL;
+        initializeCurl();
+
+        std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
+        if (!curl) {
+            throw std::runtime_error("Unable to initialize HTTP request.");
         }
-        return responseString;
+
+        ResponseData response;
+        response.maxSize = maxResponseSize;
+        char errorBuffer[CURL_ERROR_SIZE] = {};
+
+        curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 1L);
+        curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, 0L);
+        curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L);
+        curl_easy_setopt(curl.get(), CURLOPT_TCP_KEEPALIVE, 1L);
+        curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl.get(), CURLOPT_ACCEPT_ENCODING, "");
+        curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, errorBuffer);
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, writeFunction);
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response);
+
+        const CURLcode result = curl_easy_perform(curl.get());
+        if (result != CURLE_OK) {
+            if (response.sizeExceeded) {
+                throw std::runtime_error("HTTP response exceeds the configured size limit.");
+            }
+
+            const string details = errorBuffer[0] != '\0' ? errorBuffer : curl_easy_strerror(result);
+            throw std::runtime_error("HTTP request failed: " + details);
+        }
+
+        long statusCode = 0;
+        curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &statusCode);
+        if (statusCode < 200 || statusCode >= 300) {
+            throw std::runtime_error(
+                "HTTP request returned status " + std::to_string(statusCode) + "."
+            );
+        }
+
+        return std::move(response.body);
+    }
+
+    string getJSONFromURL(const string &url) {
+        return getTextFromURL(url);
     }
 
 }

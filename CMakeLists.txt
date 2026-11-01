@@ -38,6 +38,7 @@ add_executable(
     Kufar-Telegram-Notifier
     
     src/kufar.cpp
+    src/kufar_url.cpp
     src/helperfunctions.cpp
     src/telegram.cpp
     src/networking.cpp
@@ -50,3 +51,19 @@ add_executable(
 target_compile_definitions(Kufar-Telegram-Notifier PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl spdlog::spdlog TgBot::TgBot)
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(
+        kufar-url-tests
+        tests/kufar_url_tests.cpp
+        src/kufar_url.cpp
+        src/networking.cpp
+        src/queries.cpp
+        src/helperfunctions.cpp
+        src/kufar.cpp
+    )
+    target_link_libraries(kufar-url-tests PRIVATE curl spdlog::spdlog)
+    add_test(NAME kufar-url-tests COMMAND kufar-url-tests)
+endif()
