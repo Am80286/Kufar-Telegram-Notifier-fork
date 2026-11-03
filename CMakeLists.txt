@@ -46,6 +46,7 @@ add_executable(
     src/logging.cpp
     src/arguments.cpp
     src/queries.cpp
+    src/telegram_commands.cpp
 )
 
 target_compile_definitions(Kufar-Telegram-Notifier PRIVATE APP_VERSION="${PROJECT_VERSION}")

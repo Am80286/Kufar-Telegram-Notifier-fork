@@ -22,7 +22,13 @@ namespace TgBot {
     class TgLongPoll;
 }
 
+namespace queries {
+    class QueryStore;
+}
+
 namespace Telegram {
+    class CommandsHandler;
+    
     struct TelegramConfiguration {
         std::string botToken;
         // Supergroup/chat ID. Negative for groups and channels.
@@ -31,7 +37,7 @@ namespace Telegram {
 
     class Client {
     public:
-        explicit Client(const TelegramConfiguration &);
+        explicit Client(const TelegramConfiguration &, queries::QueryStore &queryStore);
         ~Client();
 
         Client(const Client &) = delete;
@@ -44,14 +50,14 @@ namespace Telegram {
         void stopPolling();
 
     private:
-        void registerHandlers();
         void pollingLoop();
 
-        TelegramConfiguration configuration_;
-        // httpClient_ должен быть объявлен раньше bot_: Bot хранит ссылку на него.
+        const TelegramConfiguration &configuration_;
+        // httpClient_ must be declared before bot_: Bot keeps a reference to it.
         std::unique_ptr<TgBot::CurlHttpClient> httpClient_;
         std::unique_ptr<TgBot::Bot> bot_;
         std::unique_ptr<TgBot::TgLongPoll> longPoll_;
+        std::unique_ptr<CommandsHandler> commandsHandler_;
         std::jthread pollingThread_;
     };
 };

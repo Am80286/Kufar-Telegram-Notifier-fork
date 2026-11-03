@@ -18,9 +18,12 @@
 #include <tgbot/tgbot.h>
 
 #include "telegram.hpp"
+#include "telegram_commands.hpp"
+#include "queries.hpp"
 
 namespace Telegram {
     using namespace std;
+    using namespace queries;
 
     namespace {
         constexpr size_t MAX_IMAGES_IN_GROUP = 10;
@@ -54,41 +57,16 @@ namespace Telegram {
         }
     }
 
-    Client::Client(const TelegramConfiguration &configuration)
+    Client::Client(const TelegramConfiguration &configuration, QueryStore &queryStore)
         : configuration_(configuration),
           httpClient_(make_unique<TgBot::CurlHttpClient>()),
-          bot_(make_unique<TgBot::Bot>(configuration_.botToken, *httpClient_)) {
-        registerHandlers();
+          bot_(make_unique<TgBot::Bot>(configuration_.botToken, *httpClient_)), 
+          commandsHandler_(make_unique<CommandsHandler>(*bot_, configuration_, queryStore)) {
+        commandsHandler_->registerHandlers(); 
     }
 
     Client::~Client() {
         stopPolling();
-    }
-
-    void Client::registerHandlers() {
-        bot_->getEvents().onCommand("start", [this](TgBot::Message::Ptr message) {
-            TgBot::SendMessageArgs args;
-            args.chatId = message->chat->id;
-            args.text =
-                "Бот публикует новые объявления Kufar в этом чате.\n\n"
-                "Команды:\n"
-                "/start — показать это сообщение\n"
-                "/ping — проверить, что бот работает";
-            if (message->messageThreadId.has_value()) {
-                args.messageThreadId = message->messageThreadId.value();
-            }
-            bot_->getApi().sendMessage(args);
-        });
-
-        bot_->getEvents().onCommand("ping", [this](TgBot::Message::Ptr message) {
-            TgBot::SendMessageArgs args;
-            args.chatId = message->chat->id;
-            args.text = "pong";
-            if (message->messageThreadId.has_value()) {
-                args.messageThreadId = message->messageThreadId.value();
-            }
-            bot_->getApi().sendMessage(args);
-        });
     }
 
     void Client::sendAdvert(const Kufar::Ad &ad, optional<int> threadID) const {

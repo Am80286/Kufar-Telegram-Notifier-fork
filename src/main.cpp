@@ -264,7 +264,7 @@ int main(int argc, char **argv) {
         );
     }
 
-    Telegram::Client telegramClient(programConfiguration.telegramConfiguration);
+    Telegram::Client telegramClient(programConfiguration.telegramConfiguration, queryStore);
     telegramClient.startPolling();
 
     while (true) {
