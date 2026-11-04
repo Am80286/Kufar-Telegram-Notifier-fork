@@ -213,6 +213,7 @@ Every object in `queries` describes one search feed. All query fields are option
 | `sort-type` | integer | Price sorting: `1` = descending, `2` = ascending. |
 | `category` | integer | Main category ID. See the category table below. |
 | `sub-category` | integer | Subcategory ID. See `include/kufar.hpp` for the full list. |
+| `computer-component-type` | integer | Computer component type (`cct`) used with subcategory `16010`. See the component type table below. |
 | `region` | integer | Region ID. See the region table below. |
 | `areas` | array of integers | Area (district/city) IDs to filter by. See `include/kufar.hpp` for the full list. |
 
@@ -244,6 +245,26 @@ Some commonly used subcategories:
 | `1010` | Apartments |
 
 The complete list of subcategories and area IDs is defined in [`include/kufar.hpp`](include/kufar.hpp).
+
+#### Computer component types
+
+Use `computer-component-type` with `"sub-category": 16010` (Components). The main `"category": 16000` (Computer equipment) is optional. For example, graphics cards use `"computer-component-type": 11`.
+
+| ID | Component type |
+| --- | --- |
+| `1` | Cases |
+| `3` | Coolers |
+| `5` | Power supplies and batteries |
+| `7` | Motherboards |
+| `8` | Laptops for parts |
+| `9` | RAM |
+| `10` | Processors |
+| `11` | Graphics cards |
+| `13` | Hard drives |
+| `15` | SSDs |
+| `17` | Sound cards |
+| `19` | Optical drives |
+| `21` | Other computer components |
 
 #### Regions
 

@@ -62,6 +62,7 @@ namespace queries {
             "\t- Тип сортировки: {}\n"
             "\t- Категория: {}\n"
             "\t- Подкатегория: {}\n"
+            "\t- Тип компьютерных комплектующих: {}\n"
             "\t- Город: {}\n"
             "\t- Район: {}\n",
             toString(this->kufar.tag),
@@ -83,6 +84,7 @@ namespace queries {
             (this->kufar.sortType.has_value() ? EnumString::sortType(this->kufar.sortType.value()) : PROPERTY_UNDEFINED),
             (this->kufar.category.has_value() ? EnumString::category(this->kufar.category.value()) : PROPERTY_UNDEFINED),
             (this->kufar.subCategory.has_value() ? EnumString::subCategory(this->kufar.subCategory.value()) : PROPERTY_UNDEFINED),
+            (this->kufar.computerComponentType.has_value() ? EnumString::computerComponentType(this->kufar.computerComponentType.value()) : PROPERTY_UNDEFINED),
             (this->kufar.region.has_value() ? EnumString::region(this->kufar.region.value()) : PROPERTY_UNDEFINED),
             joinAreas(this->kufar.areas)
         );
@@ -114,6 +116,7 @@ namespace queries {
         kufarConfiguration.sortType = getOptionalValue<SortType>(query, "sort-type");
         kufarConfiguration.category = getOptionalValue<Category>(query, "category");
         kufarConfiguration.subCategory = getOptionalValue<int>(query, "sub-category");
+        kufarConfiguration.computerComponentType = getOptionalValue<ComputerComponentType>(query, "computer-component-type");
         kufarConfiguration.region = getOptionalValue<Region>(query, "region");
         kufarConfiguration.areas = getOptionalValue<vector<int>>(query, "areas");
 
