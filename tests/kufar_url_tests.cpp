@@ -74,6 +74,7 @@ namespace {
             {"sort", "prs.a"},
             {"cat", "17010"},
             {"prn", "17000"},
+            {"cct", "11"},
             {"rgn", "7"},
             {"ar", "v.or:22,23,30"},
             {"cursor", "page-token"},
@@ -102,6 +103,7 @@ namespace {
             {"sort-type", 2},
             {"sub-category", 17010},
             {"category", 17000},
+            {"computer-component-type", 11},
             {"region", 7},
             {"areas", {22, 23, 30}}
         };
@@ -112,8 +114,42 @@ namespace {
         check(parsed.kufar.priceRange.priceMin == 100, "parsed minimum price", __LINE__);
         check(parsed.kufar.priceRange.priceMax == 800, "parsed maximum price", __LINE__);
         check(parsed.kufar.subCategory == 17010, "parsed subcategory", __LINE__);
+        check(parsed.kufar.computerComponentType == Kufar::ComputerComponentType::graphicsCard, "parsed component type", __LINE__);
         check(parsed.kufar.areas == vector<int>({22, 23, 30}), "parsed areas", __LINE__);
         check(parsed.kufar.onlyWithVideos == false, "parsed false boolean", __LINE__);
+    }
+
+    void testAllComputerComponentTypes() {
+        const vector<pair<int, string>> componentTypes = {
+            {1, "Корпуса"},
+            {3, "Кулеры"},
+            {5, "Блоки питания, аккумуляторы"},
+            {7, "Материнские платы"},
+            {8, "Ноутбуки на запчасти"},
+            {9, "Оперативная память"},
+            {10, "Процессоры"},
+            {11, "Видеокарты"},
+            {13, "Жесткие диски"},
+            {15, "SSD"},
+            {17, "Звуковые карты"},
+            {19, "Оптические приводы"},
+            {21, "Прочие компьютерные комплектующие"}
+        };
+
+        for (const auto &[id, label] : componentTypes) {
+            const json converted = Kufar::convertSearchParameters(
+                "https://www.kufar.by/l/videokarty",
+                {{"cat", "16010"}, {"cct", to_string(id)}}
+            );
+            check(converted.at("computer-component-type") == id, "converted component type", __LINE__);
+
+            const queries::QueryConfiguration parsed = queries::parseQuery(converted);
+            check(parsed.kufar.computerComponentType.has_value(), "component type is present", __LINE__);
+            check(int(parsed.kufar.computerComponentType.value()) == id, "parsed component type ID", __LINE__);
+
+            const auto componentType = static_cast<Kufar::ComputerComponentType>(id);
+            check(Kufar::EnumString::computerComponentType(componentType) == label, "component type label", __LINE__);
+        }
     }
 
     void testOptionalValues() {
@@ -155,6 +191,7 @@ namespace {
             {{{"prc", "r:90000,10000"}}, "minimum price"},
             {{{"cnd", "3"}}, "either 1 or 2"},
             {{{"cmp", "2"}}, "either 0 or 1"},
+            {{{"cct", "2"}}, "unknown computer component type"},
             {{{"sort", "lst.a"}}, "Unsupported Kufar sort type"},
             {{{"ar", "v.or:22,,30"}}, "integer"},
             {{{"rgn", "8"}}, "unknown region"},
@@ -193,6 +230,7 @@ int main() {
     const vector<pair<string, function<void()>>> tests = {
         {"extract search parameters", testExtraction},
         {"convert all supported parameters and parse legacy query", testCompleteConversionAndLegacyParser},
+        {"convert every computer component type", testAllComputerComponentTypes},
         {"convert optional values", testOptionalValues},
         {"strictly reject unsupported and invalid parameters", testStrictRejection},
         {"validate URLs before fetching", testURLValidation}

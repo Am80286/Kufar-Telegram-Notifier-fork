@@ -187,7 +187,7 @@ namespace Kufar {
         bool isSupportedParameter(const string &key) {
             static const unordered_set<string> supportedParameters = {
                 "query", "lang", "size", "cur", "cnd", "cmp", "sort",
-                "cat", "prn", "rgn", "ar", "prc"
+                "cat", "prn", "cct", "rgn", "ar", "prc"
             };
             return supportedParameters.contains(key) || BOOLEAN_PARAMETERS.contains(key);
         }
@@ -325,6 +325,15 @@ namespace Kufar {
                     throw runtime_error("Kufar parameter 'prn' must contain a positive category ID.");
                 }
                 query["category"] = category;
+            } else if (key == "cct") {
+                static const unordered_set<int> supportedComponentTypes = {
+                    1, 3, 5, 7, 8, 9, 10, 11, 13, 15, 17, 19, 21
+                };
+                const int componentType = parseInteger(key, parameter);
+                if (!supportedComponentTypes.contains(componentType)) {
+                    throw runtime_error("Kufar parameter 'cct' contains an unknown computer component type ID.");
+                }
+                query["computer-component-type"] = componentType;
             } else if (key == "rgn") {
                 if (parameter != "all" && parameter != "0") {
                     const int region = parseInteger(key, parameter);

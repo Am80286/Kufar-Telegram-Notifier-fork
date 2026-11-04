@@ -528,6 +528,22 @@ namespace Kufar {
         ascending = 2
     };
 
+    enum class ComputerComponentType {
+        computerCase = 1,
+        cooler = 3,
+        powerSupply = 5,
+        motherboard = 7,
+        laptopForParts = 8,
+        ram = 9,
+        processor = 10,
+        graphicsCard = 11,
+        hardDrive = 13,
+        ssd = 15,
+        soundCard = 17,
+        opticalDrive = 19,
+        other = 21
+    };
+
     struct KufarConfiguration {
         std::optional<std::string> tag;                 // Default: [undefined]
         std::optional<bool> onlyTitleSearch;            // Default: [undefined]
@@ -546,6 +562,7 @@ namespace Kufar {
         std::optional<SortType> sortType;               // Default: [undefined]
         std::optional<Category> category;               // Default: [undefined]
         std::optional<int> subCategory;                 // Default: [undefined]
+        std::optional<ComputerComponentType> computerComponentType; // Default: [undefined]
         std::optional<Region> region;                   // Default: [undefined]
         std::optional<std::vector<int>> areas;          // Default: [undefined]
     };
@@ -560,6 +577,7 @@ namespace Kufar {
         std::string region(Region);
         std::string area(int);
         std::string subCategory(int);
+        std::string computerComponentType(ComputerComponentType);
     }
 };
 

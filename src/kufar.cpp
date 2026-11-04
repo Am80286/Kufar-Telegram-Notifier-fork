@@ -114,6 +114,7 @@ namespace Kufar {
         if (configuration.sortType.has_value()) { addURLParameter(urlStream, "sort", getSortTypeUrlParameter(configuration.sortType.value())); }
         if (configuration.condition.has_value()) { addURLParameter(urlStream, "cnd", int(configuration.condition.value())); }
         if (configuration.sellerType.has_value()) { addURLParameterBoolean(urlStream, "cmp", int(configuration.sellerType.value())); }
+        if (configuration.computerComponentType.has_value()) { addURLParameter(urlStream, "cct", int(configuration.computerComponentType.value())); }
         if (configuration.region.has_value()) { addURLParameter(urlStream, "rgn", int(configuration.region.value())); }
         if (configuration.areas.has_value()) { addURLParameter(urlStream, "ar", "v.or:" + joinIntVector(configuration.areas.value(), ",")); }
             
@@ -163,6 +164,39 @@ namespace Kufar {
                     return "По возрастанию";
                 default:
                     return "[Неизвестный тип]";
+            }
+        }
+
+        string computerComponentType(ComputerComponentType componentType) {
+            switch (componentType) {
+                case ComputerComponentType::computerCase:
+                    return "Корпуса";
+                case ComputerComponentType::cooler:
+                    return "Кулеры";
+                case ComputerComponentType::powerSupply:
+                    return "Блоки питания, аккумуляторы";
+                case ComputerComponentType::motherboard:
+                    return "Материнские платы";
+                case ComputerComponentType::laptopForParts:
+                    return "Ноутбуки на запчасти";
+                case ComputerComponentType::ram:
+                    return "Оперативная память";
+                case ComputerComponentType::processor:
+                    return "Процессоры";
+                case ComputerComponentType::graphicsCard:
+                    return "Видеокарты";
+                case ComputerComponentType::hardDrive:
+                    return "Жесткие диски";
+                case ComputerComponentType::ssd:
+                    return "SSD";
+                case ComputerComponentType::soundCard:
+                    return "Звуковые карты";
+                case ComputerComponentType::opticalDrive:
+                    return "Оптические приводы";
+                case ComputerComponentType::other:
+                    return "Прочие компьютерные комплектующие";
+                default:
+                    return "[Неизвестный тип комплектующих]";
             }
         }
             
