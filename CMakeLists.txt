@@ -51,7 +51,7 @@ add_executable(
 
 target_compile_definitions(Kufar-Telegram-Notifier PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
-target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl spdlog::spdlog TgBot::TgBot)
+target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl spdlog::spdlog TgBot::TgBot nlohmann_json::nlohmann_json)
 
 include(CTest)
 

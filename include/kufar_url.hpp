@@ -10,7 +10,7 @@
 
 #include <string>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 namespace Kufar {
     // Extracts the resolved search parameters from a Kufar search page.

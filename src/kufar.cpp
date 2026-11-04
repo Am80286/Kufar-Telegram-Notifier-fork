@@ -5,7 +5,7 @@
 //  Created by Macintosh on 04.06.2022.
 //
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "kufar.hpp"
 #include "networking.hpp"
 #include "helperfunctions.hpp"

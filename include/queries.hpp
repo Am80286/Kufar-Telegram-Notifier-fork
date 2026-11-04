@@ -13,7 +13,7 @@
 #include <mutex>
 
 #include "kufar.hpp"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 namespace queries {
     const std::string DEFAULT_CACHE_BUCKET = "default";

@@ -32,7 +32,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 static const std::string PROPERTY_UNDEFINED = "[UNDEFINED]";
 

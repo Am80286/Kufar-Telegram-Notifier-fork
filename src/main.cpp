@@ -15,7 +15,7 @@
 #include "spdlog/spdlog.h"
 #include "spdlog/cfg/env.h"
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "kufar.hpp"
 #include "telegram.hpp"
 #include "networking.hpp"
