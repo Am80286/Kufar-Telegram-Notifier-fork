@@ -9,6 +9,7 @@
 #define telegram_commands_hpp 
 
 #include <tgbot/tgbot.h>
+#include <spdlog/fmt/fmt.h>
 
 namespace queries {
     class QueryStore;
@@ -21,12 +22,21 @@ namespace Telegram {
     public:
         CommandsHandler(TgBot::Bot &bot, const Telegram::TelegramConfiguration &config, queries::QueryStore &queryStore);
 
-    void registerHandlers();
+        void registerHandlers();
 
     private:
-        void reply(const TgBot::Message::Ptr message, const std::string &reply);
+        std::vector<std::string> parseArgs(const TgBot::Message::Ptr message);
+
+        template <typename... Args>
+        void reply(const TgBot::Message::Ptr &message, fmt::format_string<Args...> fmtStr, Args&&... args)
+        {
+            replyImpl(message, fmt::vformat(fmtStr.get(), fmt::make_format_args(args...)));
+        }
+
+        void replyImpl(const TgBot::Message::Ptr &message, const std::string &text);
 
         void handleStart(TgBot::Message::Ptr message);
+        void handleAdd(TgBot::Message::Ptr message);
 
         TgBot::Bot &bot_;
         queries::QueryStore &queryStore_;
