@@ -5,6 +5,8 @@
 //  Created by Macintosh on 04.06.2022.
 //
 
+#include <pstl/glue_algorithm_defs.h>
+#include <stdexcept>
 #include <vector>
 #include <fstream>
 #include <sstream>
@@ -77,9 +79,25 @@ bool stringHasPrefix(const string &originalString, const string &prefix) {
 }
 
 void saveFile(const string &path, const string &contents) {
-    ofstream ofs(path, ofstream::trunc);
+    string tmpPath = path + ".tmp";
+
+    ofstream ofs(tmpPath, ofstream::trunc);
+    if (!ofs.is_open())
+        throw runtime_error("Couldn't create a temporary file for writing");
+
     ofs << contents;
+    if (!ofs)
+        throw runtime_error("Couldn't write file during saving"); 
+    
     ofs.close();
+    if (!ofs)
+        throw runtime_error("Couldn't flush/close file during saving");
+
+    if (std::rename(tmpPath.c_str(), path.c_str()))
+    {
+        std::remove(tmpPath.c_str());
+        throw runtime_error("Couldn't rename the temporary file during saving");
+    }
 }
 
 string maskToken(const string &token) {
