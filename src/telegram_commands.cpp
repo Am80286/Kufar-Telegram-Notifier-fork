@@ -118,8 +118,8 @@ namespace Telegram {
                     message->from->id
                 );
             } catch (const std::exception& exc) {
-                spdlog::error("[Добавление поиска] [Пользователь:{}]: {}", message->from->id, exc.what());
-                reply(message, "Произошла ошибка:\n{}\nВозможно вы ввели неправильную ссылку", exc.what())
+                spdlog::error("[Telegram]: /add command error: {}", exc.what());
+                reply(message, "Произошла ошибка:\n{}\nВозможно вы ввели неправильную ссылку", exc.what());
             }
         });
     }
