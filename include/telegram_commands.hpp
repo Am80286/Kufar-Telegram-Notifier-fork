@@ -8,8 +8,10 @@
 #ifndef telegram_commands_hpp
 #define telegram_commands_hpp 
 
+#include <spdlog/details/registry.h>
 #include <tgbot/tgbot.h>
 #include <spdlog/fmt/fmt.h>
+#include <boost/asio/thread_pool.hpp>
 
 namespace queries {
     class QueryStore;
@@ -41,6 +43,8 @@ namespace Telegram {
         TgBot::Bot &bot_;
         queries::QueryStore &queryStore_;
         const Telegram::TelegramConfiguration &config_;
+
+        boost::asio::thread_pool thread_pool_{4};
     };
 }
 
