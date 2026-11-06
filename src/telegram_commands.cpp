@@ -9,6 +9,7 @@
 
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
+#include <boost/asio.hpp>
 
 #include "telegram_commands.hpp"
 #include "telegram.hpp"
@@ -100,24 +101,27 @@ namespace Telegram {
             return;
         }
 
-        try {
-            json newQuery = importSearchQuery(args[1]);
-            if (message->messageThreadId)
-                newQuery["message_thread_id"] = message->messageThreadId;
+        string url = args[1];
 
-            queryStore_.add(newQuery);
-            reply(message, "Поиск добавлен");
-            spdlog::info(
-                "\n- Добавлен запрос:\n{}- Пользователь: {} (ID:{})\n", 
-                parseQuery(newQuery).getDescription(),
-                message->from->username.value_or("no username"),
-                message->from->id
-            );
-        } catch (exception &exc) {
-            string what = exc.what();
-            spdlog::error("[Добавление поиска] [Пользователь:{}]: {}", message->from->id, exc.what());
-            reply(message, "Произошла ошибка:\n{}\nВозможно вы ввели неправильную ссылку", what);
-        }
+        boost::asio::post(thread_pool_, [this, message, url = std::move(url)] {
+            try {
+                json newQuery = importSearchQuery(url);
+                if (message->messageThreadId)
+                    newQuery["message_thread_id"] = message->messageThreadId;
+
+                queryStore_.add(newQuery);
+                reply(message, "Поиск добавлен");
+                spdlog::info(
+                    "\n- Добавлен запрос:\n{}- Пользователь: {} (ID:{})\n", 
+                    parseQuery(newQuery).getDescription(),
+                    message->from->username.value_or("no username"),
+                    message->from->id
+                );
+            } catch (const std::exception& exc) {
+                spdlog::error("[Добавление поиска] [Пользователь:{}]: {}", message->from->id, exc.what());
+                reply(message, "Произошла ошибка:\n{}\nВозможно вы ввели неправильную ссылку", exc.what())
+            }
+        });
     }
 
     void CommandsHandler::handleStart(Message::Ptr message) {
