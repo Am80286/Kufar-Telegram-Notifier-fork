@@ -24,6 +24,7 @@ namespace queries {
 
         std::string cacheKey() const;  
         std::string getDescription() const;
+        std::string getDescriptionConcise() const;
     };
 
     QueryConfiguration parseQuery(const nlohmann::json &query);
@@ -35,6 +36,7 @@ namespace queries {
 
             std::vector<QueryConfiguration> getQueries() const;
             nlohmann::json getRawQueries() const;
+            int queryCount() const;
 
             void add(nlohmann::json &query);
 

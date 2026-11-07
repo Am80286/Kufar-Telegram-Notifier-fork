@@ -34,6 +34,17 @@ namespace queries {
 
             return joinedAreas;
         }
+
+        void addLine(std::string& out, std::string_view label, const std::optional<std::string>& value) {
+            if (value.has_value())
+                out += fmt::format("\t- {}: {}\n", label, *value);
+        }
+
+        template <typename T, typename F>
+        std::optional<std::string> mapOpt(const std::optional<T>& opt, F&& fn) {
+            if (!opt) return std::nullopt;
+            return fn(*opt);
+        }
     }
 
     string QueryConfiguration::cacheKey() const {
@@ -88,6 +99,34 @@ namespace queries {
             (this->kufar.region.has_value() ? EnumString::region(this->kufar.region.value()) : PROPERTY_UNDEFINED),
             joinAreas(this->kufar.areas)
         );
+    }
+
+    string QueryConfiguration::getDescriptionConcise() const {
+        string out;
+
+        addLine(out, "Название", toStringExplicit(this->kufar.tag));
+        addLine(out, "Поиск только по заголовку", toStringExplicit(this->kufar.onlyTitleSearch));
+        addLine(out, "Минимальная цена", toStringExplicit(this->kufar.priceRange.priceMin));
+        addLine(out, "Максимальная цена", toStringExplicit(this->kufar.priceRange.priceMax));
+        addLine(out, "Язык", toStringExplicit(this->kufar.language));
+        addLine(out, "Макс. кол-во объявлений за один запрос", toStringExplicit(this->kufar.limit));
+        addLine(out, "Валюта", toStringExplicit(this->kufar.currency));
+        addLine(out, "Состояние", mapOpt(this->kufar.condition, EnumString::itemCondition));
+        addLine(out, "Продавец", mapOpt(this->kufar.sellerType, EnumString::sellerType));
+        addLine(out, "Только с Kufar Доставкой", toStringExplicit(this->kufar.kufarDeliveryRequired));
+        addLine(out, "Только с Kufar Оплатой", toStringExplicit(this->kufar.kufarPaymentRequired));
+        addLine(out, "Только с Kufar Рассрочкой (Халва)", toStringExplicit(this->kufar.kufarHalvaRequired));
+        addLine(out, "Только с фото", toStringExplicit(this->kufar.onlyWithPhotos));
+        addLine(out, "Только с видео", toStringExplicit(this->kufar.onlyWithVideos));
+        addLine(out, "Только с возможностью обмена", toStringExplicit(this->kufar.onlyWithExchangeAvailable));
+        addLine(out, "Тип сортировки", mapOpt(this->kufar.sortType, EnumString::sortType));
+        addLine(out, "Категория", mapOpt(this->kufar.category, EnumString::category));
+        addLine(out, "Подкатегория", mapOpt(this->kufar.subCategory, EnumString::subCategory));
+        addLine(out, "Тип компьютерных комплектующих", mapOpt(this->kufar.computerComponentType, EnumString::computerComponentType));
+        addLine(out, "Город", mapOpt(this->kufar.region, EnumString::region));
+        addLine(out, "Район", mapOpt(this->kufar.areas, joinAreas));
+
+        return out;
     }
 
     QueryConfiguration parseQuery(const json &query) {
@@ -164,6 +203,10 @@ namespace queries {
         }
 
         return ret;
+    }
+
+    int QueryStore::queryCount() const {
+        return json_.at("queries").size();
     }
 
     json QueryStore::getRawQueries() const {

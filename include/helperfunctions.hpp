@@ -83,6 +83,17 @@ std::string toString(const T &value) {
 }
 
 /**
+  The same as above, but an empty optional returns
+  nullopt instead of the "[UNDEFINED]" string 
+ */
+template <typename T>
+std::optional<std::string> toStringExplicit(const std::optional<T>& opt) {
+    if (!opt.has_value())
+        return std::nullopt;
+    return toString(opt);   // engaged, so the existing operator<< is used (keeps Да/Нет for bool)
+}
+
+/**
   Проверка вектора на наличие заданного значения
  */
 bool vectorContains(const std::vector<int> &, const int &);

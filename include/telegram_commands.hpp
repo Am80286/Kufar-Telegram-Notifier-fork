@@ -39,6 +39,7 @@ namespace Telegram {
 
         void handleStart(TgBot::Message::Ptr message);
         void handleAdd(TgBot::Message::Ptr message);
+        void handleList(TgBot::Message::Ptr message);
 
         TgBot::Bot &bot_;
         queries::QueryStore &queryStore_;

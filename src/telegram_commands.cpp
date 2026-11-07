@@ -39,6 +39,10 @@ namespace Telegram {
         bot_.getEvents().onCommand("add", [this](Message::Ptr message) {
             handleAdd(message);
         });
+
+        bot_.getEvents().onCommand("list", [this](Message::Ptr message) {
+            handleList(message);
+        });
     }
     
     vector<string> CommandsHandler::parseArgs(Message::Ptr message) {
@@ -130,5 +134,23 @@ namespace Telegram {
         } else {
             reply(message, "Бот включен и работает");
         }
+    }
+    
+    void CommandsHandler::handleList(TgBot::Message::Ptr message) {     
+        if (!queryStore_.queryCount())
+            return;
+
+        string replyString;
+
+        int idx = 0;
+        for (const auto query : queryStore_.getQueries()) {
+            if (query.messageThreadID == message->messageThreadId) {
+                idx++;
+                replyString += fmt::format("Поиск {}:\n{}\n", idx, query.getDescriptionConcise());
+            }
+        }
+
+        if (idx)
+            reply(message, fmt::runtime(replyString));
     }
 }
