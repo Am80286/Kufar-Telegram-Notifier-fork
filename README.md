@@ -8,11 +8,11 @@ A small self-hosted bot that watches [Kufar](https://kufar.by) for new listings 
 
 ## How it works
 
-1. The bot reads `kufar-configuration.json` and runs each entry in `queries` against the Kufar search API.
+1. The bot reads `kufar-configuration.json` and runs each entry in `queries` against the Kufar search API. Queries can also be added and removed at runtime with Telegram commands; changes are written back to the configuration file.
 2. New listings are sent to the Telegram chat. If a query has `message-thread-id`, its listings go to that topic; otherwise they go to the chat's General topic.
 3. Sent listing IDs are stored in `cached-data.json`, separately for every topic, so the same listing is not posted twice.
 4. After all queries have run, the bot waits for the configured loop delay and starts again. It runs in the foreground until stopped.
-5. In parallel, the bot receives Telegram updates through long polling. No public IP or webhook is required; it currently answers `/start` and `/ping`.
+5. In parallel, the bot receives Telegram updates through long polling. No public IP or webhook is required; it currently answers `/start`, `/add`, `/list`, and `/del`.
 
 Telegram messages produced by the bot are currently written in Russian.
 
@@ -131,12 +131,32 @@ Examples:
 
 ### Telegram commands
 
-The bot uses long polling (`getUpdates`), so it can receive commands without a public IP address or a webhook. Commands are answered in the chat and topic where they were sent.
+The bot uses long polling (`getUpdates`), so it can receive commands without a public IP address or a webhook. Commands are answered in the chat and topic where they were sent. `/add` and `/del` are ignored outside the chat configured in `chat-id`.
 
 | Command | Description |
 | --- | --- |
 | `/start` | Show a short description of the bot. |
-| `/ping` | Reply with `pong`; useful for checking that polling works. |
+| `/add <URL>` | Add a new search from a Kufar search-results URL. |
+| `/list` | List the searches assigned to the current topic, each with a number. |
+| `/del <N>` | Delete search number `N` from the current topic. |
+
+#### `/add`
+
+Send a link to a Kufar search-results page, for example:
+
+```text
+/add https://www.kufar.by/l?query=iphone
+```
+
+The bot downloads the page, reads the search parameters Kufar resolved for it, converts them to the same fields used in the configuration file, assigns an ID, and appends the query to `kufar-configuration.json`. The page is fetched in the background, so the bot keeps polling while the import runs. The new search is picked up on the next loop; no restart is needed. If the command is sent inside a topic, the query is bound to that topic; in the General topic it is left without a thread ID.
+
+Only `https` links to search pages on `www.kufar.by`, `auto.kufar.by`, and `re.kufar.by` are accepted; the path must be `/l` or start with `/l/`. Links to individual listings or accounts are rejected. Search filters that cannot be represented in the query format cause an error instead of being silently dropped. The original link is stored in the query's `source-url` field.
+
+#### `/list` and `/del`
+
+`/list` shows only the searches assigned to the topic where the command was sent, numbered from `1`. The numbering is local to the topic and can change after a search is deleted. `/del N` removes the search with that number from the current topic and rewrites the configuration file. Deleting a search does not clear the cache; see [Cache file](#cache-file).
+
+Both commands rewrite `kufar-configuration.json`, so the bot needs write access to that file.
 
 ## Configuration
 
@@ -193,6 +213,7 @@ Every object in `queries` describes one search feed. All query fields are option
 
 | Key | Type | Description |
 | --- | --- | --- |
+| `id` | integer | Internal query ID. Assigned automatically and managed by the bot; do not edit it by hand. |
 | `tag` | string | Search text. Also used as the `#hashtag` at the top of the Telegram message. |
 | `message-thread-id` | integer | Topic ID in the supergroup where this query's listings are posted. Must be positive. If omitted, listings go to the General topic. |
 | `only-title-search` | boolean | Search only in listing titles. |
@@ -216,8 +237,11 @@ Every object in `queries` describes one search feed. All query fields are option
 | `computer-component-type` | integer | Computer component type (`cct`) used with subcategory `16010`. See the component type table below. |
 | `region` | integer | Region ID. See the region table below. |
 | `areas` | array of integers | Area (district/city) IDs to filter by. See `include/kufar.hpp` for the full list. |
+| `source-url` | string | Kufar search URL the query was imported from with `/add`. Informational only. |
 
 Boolean filters are sent to Kufar only when set to `true`. Setting them to `false` is the same as omitting them.
+
+When the bot starts, it assigns an `id` to every query that does not have one and rewrites the configuration file. The file is also rewritten when a query is added or deleted with `/add` or `/del`.
 
 #### Categories
 
@@ -322,13 +346,17 @@ A listing is added to the cache only after Telegram confirms the send. If sendin
 
 To make the bot forget what it has sent, stop it, delete `cached-data.json`, and start it again. A new empty cache will be created automatically. Older cache formats are not migrated; if an old flat-array cache is found, it is ignored with a warning and tracking starts over.
 
+Deleting a query with `/del` does not remove anything from the cache. If you add the same search back to the same topic, listings that were already sent there will not be sent again until the cache is cleared.
+
+The configuration and cache files are written atomically: the bot writes a temporary `.tmp` file and renames it over the destination. If the process is interrupted while saving, the previous valid file is kept.
+
 ## Logging
 
 By default the bot writes to `kufar-notifier.log` in the current working directory and also prints to the console. Use `--no-log` to disable the file, `--log <file>` to choose another path, and `--log-level <level>` to change verbosity.
 
 ## Credits
 
-This project is a fork of [TechUnRestricted/Kufar-Telegram-Notifier](https://github.com/TechUnRestricted/Kufar-Telegram-Notifier). This fork adds per-query Telegram topics, a sent-listing cache split by topic, command-line argument parsing with CLI11, structured logging with spdlog, and Telegram Bot API integration through [tgbot-cpp](https://github.com/reo7sp/tgbot-cpp) with long polling.
+This project is a fork of [TechUnRestricted/Kufar-Telegram-Notifier](https://github.com/TechUnRestricted/Kufar-Telegram-Notifier). This fork adds per-query Telegram topics, a sent-listing cache split by topic, command-line argument parsing with CLI11, structured logging with spdlog, Telegram Bot API integration through [tgbot-cpp](https://github.com/reo7sp/tgbot-cpp) with long polling, runtime query management with the `/add`, `/list`, and `/del` commands, and atomic configuration and cache writes.
 
 ## License
 
