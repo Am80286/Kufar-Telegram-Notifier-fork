@@ -5,6 +5,7 @@
 //  Created by Am80286 on 03.11.2026
 //
 
+#include <charconv>
 #include <exception>
 
 #include <spdlog/spdlog.h>
@@ -42,6 +43,10 @@ namespace Telegram {
 
         bot_.getEvents().onCommand("list", [this](Message::Ptr message) {
             handleList(message);
+        });
+
+        bot_.getEvents().onCommand("del", [this](Message::Ptr message) {
+            handleDel(message);
         });
     }
     
@@ -152,5 +157,72 @@ namespace Telegram {
 
         if (idx)
             reply(message, fmt::runtime(replyString));
+    }
+
+    void CommandsHandler::handleDel(TgBot::Message::Ptr message) {
+        if (message->chat->id != config_.chatID)
+            return;
+
+        const vector<string> args = parseArgs(message);
+        if (args.size() != 2) {
+            reply(message, "Использование: /del N, где N — номер поиска из /list");
+            return;
+        }
+
+        size_t requestedIndex = 0;
+        const string &indexText = args[1];
+        const char *begin = indexText.data();
+        const char *end = begin + indexText.size();
+        const auto [position, error] = from_chars(begin, end, requestedIndex);
+        if (indexText.empty() || error != errc() || position != end || requestedIndex == 0) {
+            reply(message, "Номер поиска должен быть положительным целым числом");
+            return;
+        }
+
+        const vector<QueryConfiguration> storedQueries = queryStore_.getQueries();
+        if (storedQueries.empty()) {
+            reply(message, "У вас нет добавленных поисков");
+            return;
+        }
+
+        optional<QueryID> targetID;
+        size_t index = 0;
+        for (const auto &query : storedQueries) {
+            if (query.messageThreadID == message->messageThreadId) {
+                index++;
+                if (index == requestedIndex) {
+                    targetID = query.id;
+                    break;
+                }
+            }
+        }
+
+        if (!targetID.has_value()) {
+            reply(message, "Поиск №{} не найден в этой теме. Используйте /list", requestedIndex);
+            return;
+        }
+
+        optional<QueryConfiguration> removedQuery;
+        try {
+            removedQuery = queryStore_.remove(targetID.value());
+        } catch (const exception &exc) {
+            spdlog::error("[Telegram]: /del command error: {}", exc.what());
+            reply(message, "Произошла ошибка при удалении поиска:\n{}", exc.what());
+            return;
+        }
+
+        if (!removedQuery.has_value()) {
+            reply(message, "Этот поиск уже был удалён. Используйте /list");
+            return;
+        }
+
+        reply(message, "Поиск №{} удалён", requestedIndex);
+        spdlog::info(
+            "\n- Удалён запрос (ID:{}):\n{}- Пользователь: {} (ID:{})\n",
+            removedQuery->id,
+            removedQuery->getDescription(),
+            message->from->username.value_or("no username"),
+            message->from->id
+        );
     }
 }

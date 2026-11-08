@@ -5,6 +5,10 @@
 //  Created by Am80286 on 01.11.2026
 //
 
+#include <algorithm>
+#include <limits>
+#include <unordered_set>
+
 #include <spdlog/fmt/fmt.h>
 
 #include "queries.hpp"
@@ -44,6 +48,32 @@ namespace queries {
         std::optional<std::string> mapOpt(const std::optional<T>& opt, F&& fn) {
             if (!opt) return std::nullopt;
             return fn(*opt);
+        }
+
+        QueryID parseQueryID(const json &query) {
+            if (!query.is_object() || !query.contains("id")) {
+                throw runtime_error("Поле \"id\" является обязательным.");
+            }
+
+            const json &idValue = query.at("id");
+            QueryID id = 0;
+
+            if (idValue.is_number_unsigned()) {
+                id = idValue.get<QueryID>();
+            } else if (idValue.is_number_integer()) {
+                const auto signedID = idValue.get<std::int64_t>();
+                if (signedID > 0) {
+                    id = static_cast<QueryID>(signedID);
+                }
+            } else {
+                throw runtime_error("Поле \"id\" должно быть положительным целым числом.");
+            }
+
+            if (id == 0) {
+                throw runtime_error("Поле \"id\" должно быть положительным целым числом.");
+            }
+
+            return id;
         }
     }
 
@@ -130,6 +160,9 @@ namespace queries {
     }
 
     QueryConfiguration parseQuery(const json &query) {
+        if (!query.is_object()) {
+            throw runtime_error("Запрос должен быть объектом.");
+        }
 
         KufarConfiguration kufarConfiguration;
 
@@ -160,6 +193,7 @@ namespace queries {
         kufarConfiguration.areas = getOptionalValue<vector<int>>(query, "areas");
 
         QueryConfiguration queryConfiguration;
+        queryConfiguration.id = parseQueryID(query);
         queryConfiguration.kufar = kufarConfiguration;
         queryConfiguration.messageThreadID = getOptionalValue<int>(query, "message-thread-id");
 
@@ -183,14 +217,55 @@ namespace queries {
             throw runtime_error("Поле \"queries\" должно быть массивом.");
         }
 
+        QueryID highestID = 0;
+        unordered_set<QueryID> queryIDs;
         size_t index = 0;
+
         for (const json &query : json_.at("queries")) {
             try {
+                if (!query.is_object()) {
+                    throw runtime_error("Запрос должен быть объектом.");
+                }
+
+                if (query.contains("id")) {
+                    const QueryID id = parseQueryID(query);
+                    if (!queryIDs.insert(id).second) {
+                        throw runtime_error("Дублируется значение поля \"id\": " + to_string(id));
+                    }
+                    highestID = std::max(highestID, id);
+                }
+            } catch (const exception &exc) {
+                throw runtime_error("Некорректный запрос #" + to_string(index + 1) + ": " + exc.what());
+            }
+            index++;
+        }
+
+        bool queriesModified = false;
+        index = 0;
+        for (json &query : json_.at("queries")) {
+            try {
+                if (!query.contains("id")) {
+                    if (highestID == numeric_limits<QueryID>::max()) {
+                        throw runtime_error("Невозможно назначить запросу новый ID: достигнут максимум.");
+                    }
+                    query["id"] = ++highestID;
+                    queriesModified = true;
+                }
                 parseQuery(query);
             } catch (const exception &exc) {
                 throw runtime_error("Некорректный запрос #" + to_string(index + 1) + ": " + exc.what());
             }
             index++;
+        }
+
+        if (highestID == numeric_limits<QueryID>::max()) {
+            nextQueryID_.reset();
+        } else {
+            nextQueryID_ = highestID + 1;
+        }
+
+        if (queriesModified) {
+            saveFile(path_, json_.dump(4));
         }
     }
 
@@ -206,6 +281,7 @@ namespace queries {
     }
 
     int QueryStore::queryCount() const {
+        lock_guard<mutex> lock(mtx_);
         return json_.at("queries").size();
     }
 
@@ -215,12 +291,53 @@ namespace queries {
     }
 
     void QueryStore::add(json &query) {
-        parseQuery(query);
         lock_guard<mutex> lock(mtx_);
+
+        if (!nextQueryID_.has_value()) {
+            throw runtime_error("Невозможно добавить запрос: достигнут максимальный ID.");
+        }
+        if (!query.is_object()) {
+            throw runtime_error("Запрос должен быть объектом.");
+        }
+
+        const QueryID id = nextQueryID_.value();
+        json storedQuery = query;
+        storedQuery["id"] = id;
+        parseQuery(storedQuery);
+
         json updated = json_;
-        updated["queries"].push_back(query);
+        updated["queries"].push_back(storedQuery);
 
         saveFile(path_, updated.dump(4));
         json_ = std::move(updated);
+        query = std::move(storedQuery);
+
+        if (id == numeric_limits<QueryID>::max()) {
+            nextQueryID_.reset();
+        } else {
+            nextQueryID_ = id + 1;
+        }
+    }
+
+    optional<QueryConfiguration> QueryStore::remove(QueryID id) {
+        lock_guard<mutex> lock(mtx_);
+        json updated = json_;
+        json &storedQueries = updated.at("queries");
+        auto queryIterator = find_if(
+            storedQueries.begin(),
+            storedQueries.end(),
+            [id](const json &query) { return parseQueryID(query) == id; }
+        );
+
+        if (queryIterator == storedQueries.end()) {
+            return nullopt;
+        }
+
+        QueryConfiguration removedQuery = parseQuery(*queryIterator);
+        storedQueries.erase(queryIterator);
+
+        saveFile(path_, updated.dump(4));
+        json_ = std::move(updated);
+        return removedQuery;
     }
 }
