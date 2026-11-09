@@ -16,6 +16,7 @@ include_directories(include)
 find_package(CURL REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(nlohmann_json 3.7.3 REQUIRED)
+find_package(Threads REQUIRED)
 
 # tgbot-cpp is not packaged by most distributions, so fetch a pinned release.
 set(ENABLE_TESTS OFF CACHE BOOL "" FORCE)
@@ -47,11 +48,12 @@ add_executable(
     src/arguments.cpp
     src/queries.cpp
     src/telegram_commands.cpp
+    src/market.cpp
 )
 
 target_compile_definitions(Kufar-Telegram-Notifier PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
-target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl spdlog::spdlog TgBot::TgBot nlohmann_json::nlohmann_json)
+target_link_libraries(Kufar-Telegram-Notifier PRIVATE curl spdlog::spdlog TgBot::TgBot nlohmann_json::nlohmann_json Threads::Threads)
 
 include(CTest)
 
@@ -67,4 +69,15 @@ if(BUILD_TESTING)
     )
     target_link_libraries(kufar-url-tests PRIVATE curl spdlog::spdlog)
     add_test(NAME kufar-url-tests COMMAND kufar-url-tests)
+
+    add_executable(
+        market-tests
+        tests/market_tests.cpp
+        src/market.cpp
+        src/kufar.cpp
+        src/networking.cpp
+        src/helperfunctions.cpp
+    )
+    target_link_libraries(market-tests PRIVATE curl spdlog::spdlog Threads::Threads)
+    add_test(NAME market-tests COMMAND market-tests)
 endif()
