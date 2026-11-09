@@ -5,6 +5,13 @@
 //  Created by Macintosh on 04.06.2022.
 //
 
+#include <algorithm>
+#include <chrono>
+#include <stdexcept>
+#include <thread>
+#include <unordered_set>
+#include <utility>
+
 #include <nlohmann/json.hpp>
 #include "kufar.hpp"
 #include "networking.hpp"
@@ -87,72 +94,252 @@ namespace Kufar {
                 addURLParameter(ostream, parameter, to_string(value.value()), encodeValue);
             }
         }
-    
-    }
 
-    vector<Ad> getAds(const KufarConfiguration &configuration) {
-        vector<Ad> adverts;
-        ostringstream urlStream;
-        urlStream << baseURL;
-        
-        addURLParameter(urlStream, "query", configuration.tag, true);
-        addURLParameter(urlStream, "lang", configuration.language);
-        addURLParameter(urlStream, "size", configuration.limit);
-        addURLParameter(urlStream, "prc", configuration.priceRange.joinPrice());
-        addURLParameter(urlStream, "cur", configuration.currency);
-        addURLParameter(urlStream, "cat", configuration.subCategory);
-        addURLParameter(urlStream, "prn", configuration.category);
-
-        addURLParameterBoolean(urlStream, "ot", configuration.onlyTitleSearch);
-        addURLParameterBoolean(urlStream, "dle", configuration.kufarDeliveryRequired);
-        addURLParameterBoolean(urlStream, "sde", configuration.kufarPaymentRequired);
-        addURLParameterBoolean(urlStream, "hlv", configuration.kufarHalvaRequired);
-        addURLParameterBoolean(urlStream, "oph", configuration.onlyWithPhotos);
-        addURLParameterBoolean(urlStream, "ovi", configuration.onlyWithVideos);
-        addURLParameterBoolean(urlStream, "pse", configuration.onlyWithExchangeAvailable);
-        
-        if (configuration.sortType.has_value()) { addURLParameter(urlStream, "sort", getSortTypeUrlParameter(configuration.sortType.value())); }
-        if (configuration.condition.has_value()) { addURLParameter(urlStream, "cnd", int(configuration.condition.value())); }
-        if (configuration.sellerType.has_value()) { addURLParameterBoolean(urlStream, "cmp", int(configuration.sellerType.value())); }
-        if (configuration.computerComponentType.has_value()) { addURLParameter(urlStream, "cct", int(configuration.computerComponentType.value())); }
-        if (configuration.region.has_value()) { addURLParameter(urlStream, "rgn", int(configuration.region.value())); }
-        if (configuration.areas.has_value()) { addURLParameter(urlStream, "ar", "v.or:" + joinIntVector(configuration.areas.value(), ",")); }
-            
-        string rawJson = getJSONFromURL(urlStream.str());
-        
-        json ads = json::parse(rawJson).at("ads");
-
-        for (const auto &ad : ads) {
-            Ad advert;
-            
-            if (configuration.tag.has_value()) {
-                advert.tag = configuration.tag.value();
+        int parseAdvertPrice(const json &ad) {
+            if (!ad.contains("price_byn")) {
+                return 0;
             }
-            
+
+            const json &price = ad.at("price_byn");
+            if (price.is_number_integer()) {
+                return price.get<int>();
+            }
+            if (!price.is_string()) {
+                return 0;
+            }
+
+            const string text = price.get<string>();
+            if (text.empty()) {
+                return 0;
+            }
+
+            try {
+                return stoi(text);
+            } catch (...) {
+                return 0;
+            }
+        }
+
+        Ad parseAdvert(const json &ad, const optional<string> &tag) {
+            Ad advert;
+
+            if (tag.has_value()) {
+                advert.tag = tag.value();
+            }
+
             advert.title = ad.at("subject");
             advert.id = ad.at("ad_id");
             advert.date = timestampShift(zuluToTimestamp((string)ad.at("list_time")), 3);
-            advert.price = stoi((string)ad.at("price_byn"));
-            advert.phoneNumberIsVisible = !ad.at("phone_hidden");
+            advert.price = parseAdvertPrice(ad);
+            advert.phoneNumberIsVisible = !(
+                ad.contains("phone_hidden") &&
+                ad.at("phone_hidden").is_boolean() &&
+                ad.at("phone_hidden").get<bool>()
+            );
             advert.link = ad.at("ad_link");
-            
-            json accountParameters = ad.at("account_parameters");
-            for (const auto &accountParameter : accountParameters) {
-                if (accountParameter.at("p") == "name") {
-                    advert.sellerName = accountParameter.at("v");
-                    break;
+
+            if (ad.contains("account_parameters") && ad.at("account_parameters").is_array()) {
+                for (const auto &accountParameter : ad.at("account_parameters")) {
+                    const bool isName = accountParameter.contains("p") &&
+                        accountParameter.at("p").is_string() &&
+                        accountParameter.at("p").get<string>() == "name";
+                    if (isName) {
+                        if (accountParameter.contains("v") && accountParameter.at("v").is_string()) {
+                            advert.sellerName = accountParameter.at("v").get<string>();
+                        }
+                        break;
+                    }
                 }
             }
-            
-            json imagesArray = ad.at("images");
-            for (const auto &image : imagesArray) {
-                insertImageURL(advert.images, image);
+
+            if (ad.contains("images") && ad.at("images").is_array()) {
+                for (const auto &image : ad.at("images")) {
+                    insertImageURL(advert.images, image);
+                }
             }
-            
-            adverts.push_back(advert);
+
+            return advert;
         }
-        
-        return adverts;
+
+        string buildSearchURLImpl(const KufarConfiguration &configuration, const optional<string> &cursor, const optional<int> &pageSize) {
+            ostringstream urlStream;
+            urlStream << baseURL;
+
+            addURLParameter(urlStream, "query", configuration.tag, true);
+            addURLParameter(urlStream, "lang", configuration.language);
+            addURLParameter(urlStream, "size", pageSize);
+            addURLParameter(urlStream, "prc", configuration.priceRange.joinPrice());
+            addURLParameter(urlStream, "cur", configuration.currency);
+            addURLParameter(urlStream, "cat", configuration.subCategory);
+            addURLParameter(urlStream, "prn", configuration.category);
+
+            addURLParameterBoolean(urlStream, "ot", configuration.onlyTitleSearch);
+            addURLParameterBoolean(urlStream, "dle", configuration.kufarDeliveryRequired);
+            addURLParameterBoolean(urlStream, "sde", configuration.kufarPaymentRequired);
+            addURLParameterBoolean(urlStream, "hlv", configuration.kufarHalvaRequired);
+            addURLParameterBoolean(urlStream, "oph", configuration.onlyWithPhotos);
+            addURLParameterBoolean(urlStream, "ovi", configuration.onlyWithVideos);
+            addURLParameterBoolean(urlStream, "pse", configuration.onlyWithExchangeAvailable);
+
+            if (configuration.sortType.has_value()) { addURLParameter(urlStream, "sort", getSortTypeUrlParameter(configuration.sortType.value())); }
+            if (configuration.condition.has_value()) { addURLParameter(urlStream, "cnd", int(configuration.condition.value())); }
+            if (configuration.sellerType.has_value()) { addURLParameterBoolean(urlStream, "cmp", int(configuration.sellerType.value())); }
+            if (configuration.computerComponentType.has_value()) { addURLParameter(urlStream, "cct", int(configuration.computerComponentType.value())); }
+            if (configuration.region.has_value()) { addURLParameter(urlStream, "rgn", int(configuration.region.value())); }
+            if (configuration.areas.has_value()) { addURLParameter(urlStream, "ar", "v.or:" + joinIntVector(configuration.areas.value(), ",")); }
+
+            addURLParameter(urlStream, "cursor", cursor, true);
+
+            return urlStream.str();
+        }
+
+        SearchPage parseSearchPageDocument(const json &document, const optional<string> &tag) {
+            if (!document.is_object()) {
+                throw runtime_error("Kufar search response must be a JSON object.");
+            }
+            if (!document.contains("ads") || !document.at("ads").is_array()) {
+                throw runtime_error("Kufar search response does not contain an ads array.");
+            }
+
+            SearchPage page;
+            if (document.contains("total") && document.at("total").is_number_integer()) {
+                page.total = document.at("total").get<long long>();
+            }
+
+            for (const auto &ad : document.at("ads")) {
+                page.ads.push_back(parseAdvert(ad, tag));
+            }
+
+            if (document.contains("pagination") && !document.at("pagination").is_null()) {
+                const json &pagination = document.at("pagination");
+                if (pagination.contains("pages") && pagination.at("pages").is_array()) {
+                    for (const auto &candidate : pagination.at("pages")) {
+                        const bool isNext = candidate.contains("label") &&
+                            candidate.at("label").is_string() &&
+                            candidate.at("label").get<string>() == "next";
+                        if (!isNext) {
+                            continue;
+                        }
+                        if (candidate.contains("token") && candidate.at("token").is_string()) {
+                            page.nextCursor = candidate.at("token").get<string>();
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return page;
+        }
+    }
+
+    string buildSearchURL(const KufarConfiguration &configuration, const optional<string> &cursor, const optional<int> &pageSize) {
+        return buildSearchURLImpl(configuration, cursor, pageSize);
+    }
+
+    SearchPage parseSearchPage(const string &rawJson, const optional<string> &tag) {
+        json document;
+        try {
+            document = json::parse(rawJson);
+        } catch (const exception &exc) {
+            throw runtime_error("Unable to parse Kufar search response: " + string(exc.what()));
+        }
+        return parseSearchPageDocument(document, tag);
+    }
+
+    SearchPage getSearchPage(const KufarConfiguration &configuration, const optional<string> &cursor, const optional<int> &pageSize) {
+        if (pageSize.has_value() && pageSize.value() <= 0) {
+            throw runtime_error("Kufar page size must be positive.");
+        }
+
+        const string rawJson = getJSONFromURL(buildSearchURL(configuration, cursor, pageSize));
+        return parseSearchPage(rawJson, configuration.tag);
+    }
+
+    vector<Ad> getAds(const KufarConfiguration &configuration) {
+        return getSearchPage(configuration, nullopt, configuration.limit).ads;
+    }
+
+    FetchResult getAllAds(const KufarConfiguration &configuration, const FetchOptions &options) {
+        if (options.maxPages <= 0) {
+            throw runtime_error("Kufar max page count must be positive.");
+        }
+        if (options.retryCount < 0) {
+            throw runtime_error("Kufar retry count must not be negative.");
+        }
+
+        const int pageSize = clamp(options.pageSize, 1, 200);
+        FetchResult result;
+        unordered_set<int> seenAdIDs;
+        unordered_set<string> seenCursors;
+        optional<string> cursor;
+
+        for (int pageNumber = 1; pageNumber <= options.maxPages; pageNumber++) {
+            SearchPage page;
+
+            for (int attempt = 0; ; attempt++) {
+                try {
+                    page = getSearchPage(configuration, cursor, pageSize);
+                    break;
+                } catch (const exception &exc) {
+                    if (attempt >= options.retryCount) {
+                        throw;
+                    }
+                    spdlog::warn(
+                        "[Kufar] Page fetch failed (attempt {}/{}): {}",
+                        attempt + 1,
+                        options.retryCount + 1,
+                        exc.what()
+                    );
+                    if (options.retryDelayMilliseconds > 0) {
+                        this_thread::sleep_for(chrono::milliseconds(options.retryDelayMilliseconds));
+                    }
+                }
+            }
+
+            if (pageNumber == 1) {
+                result.total = page.total;
+            }
+            result.pagesFetched = pageNumber;
+
+            for (auto &ad : page.ads) {
+                if (seenAdIDs.insert(ad.id).second) {
+                    result.ads.push_back(std::move(ad));
+                }
+            }
+
+            DEBUG_MSG(
+                "[Kufar] Fetched page {}: {} ads, {} unique ads, total {}",
+                pageNumber,
+                page.ads.size(),
+                result.ads.size(),
+                result.total
+            );
+
+            if (!page.nextCursor.has_value()) {
+                break;
+            }
+
+            if (pageNumber == options.maxPages) {
+                result.truncated = true;
+                result.nextCursor = page.nextCursor;
+                spdlog::warn(
+                    "[Kufar] Reached the configured page limit ({}) with more results available.",
+                    options.maxPages
+                );
+                break;
+            }
+
+            if (!seenCursors.insert(page.nextCursor.value()).second) {
+                throw runtime_error("Kufar pagination loop detected.");
+            }
+
+            cursor = page.nextCursor;
+            if (options.delayMilliseconds > 0) {
+                this_thread::sleep_for(chrono::milliseconds(options.delayMilliseconds));
+            }
+        }
+
+        return result;
     }
 
     namespace EnumString {

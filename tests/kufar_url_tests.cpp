@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include "kufar.hpp"
 #include "kufar_url.hpp"
 #include "queries.hpp"
 
@@ -109,7 +110,9 @@ namespace {
         };
         check(actual == expected, "actual == expected", __LINE__);
 
-        const queries::QueryConfiguration parsed = queries::parseQuery(actual);
+        json queryWithID = actual;
+        queryWithID["id"] = 1;
+        const queries::QueryConfiguration parsed = queries::parseQuery(queryWithID);
         check(parsed.kufar.tag == "iphone", "parsed tag", __LINE__);
         check(parsed.kufar.priceRange.priceMin == 100, "parsed minimum price", __LINE__);
         check(parsed.kufar.priceRange.priceMax == 800, "parsed maximum price", __LINE__);
@@ -143,7 +146,9 @@ namespace {
             );
             check(converted.at("computer-component-type") == id, "converted component type", __LINE__);
 
-            const queries::QueryConfiguration parsed = queries::parseQuery(converted);
+            json queryWithID = converted;
+            queryWithID["id"] = 1;
+            const queries::QueryConfiguration parsed = queries::parseQuery(queryWithID);
             check(parsed.kufar.computerComponentType.has_value(), "component type is present", __LINE__);
             check(int(parsed.kufar.computerComponentType.value()) == id, "parsed component type ID", __LINE__);
 
@@ -224,6 +229,91 @@ namespace {
             "search page"
         );
     }
+
+    void testSearchURLBuilding() {
+        Kufar::KufarConfiguration configuration;
+        configuration.tag = "iphone 13";
+        configuration.language = "ru";
+        configuration.subCategory = 17010;
+        configuration.condition = Kufar::ItemCondition::used;
+        configuration.areas = vector<int>({22, 23});
+
+        const string firstPage = Kufar::buildSearchURL(configuration, nullopt, 200);
+        check(firstPage.find("size=200&") != string::npos, "page size", __LINE__);
+        check(firstPage.find("query=iphone%2013&") != string::npos, "encoded query", __LINE__);
+        check(firstPage.find("cat=17010&") != string::npos, "subcategory", __LINE__);
+        check(firstPage.find("cnd=1&") != string::npos, "condition", __LINE__);
+        check(firstPage.find("ar=v.or:22,23&") != string::npos, "areas", __LINE__);
+        check(firstPage.find("cursor=") == string::npos, "no cursor on first page", __LINE__);
+
+        const string nextPage = Kufar::buildSearchURL(configuration, string("abc+def/ghi=="), 200);
+        check(
+            nextPage.find("cursor=abc%2Bdef%2Fghi%3D%3D&") != string::npos,
+            "encoded cursor",
+            __LINE__
+        );
+    }
+
+    void testSearchPageParsing() {
+        const string rawJson = R"({
+            "ads": [
+                {
+                    "subject": "iPhone 13",
+                    "ad_id": 1001,
+                    "list_time": "2026-11-09T09:42:49Z",
+                    "price_byn": "310000",
+                    "phone_hidden": false,
+                    "ad_link": "https://www.kufar.by/item/1001",
+                    "account_parameters": [{"p": "name", "v": "Alice"}],
+                    "images": []
+                },
+                {
+                    "subject": "Listing without price",
+                    "ad_id": 1002,
+                    "list_time": "2026-11-09T09:42:49Z",
+                    "price_byn": null,
+                    "phone_hidden": true,
+                    "ad_link": "https://www.kufar.by/item/1002"
+                }
+            ],
+            "pagination": {
+                "pages": [
+                    {"label": "self", "num": 1, "token": null},
+                    {"label": "next", "num": 2, "token": "next-token"}
+                ]
+            },
+            "total": 1234
+        })";
+
+        const Kufar::SearchPage page = Kufar::parseSearchPage(rawJson, string("iphone"));
+        check(page.total == 1234, "page total", __LINE__);
+        check(page.ads.size() == 2, "page ads", __LINE__);
+        check(page.nextCursor.has_value(), "next cursor present", __LINE__);
+        check(page.nextCursor.value() == "next-token", "next cursor value", __LINE__);
+        check(page.ads[0].tag == string("iphone"), "advert tag", __LINE__);
+        check(page.ads[0].id == 1001, "advert id", __LINE__);
+        check(page.ads[0].price == 310000, "advert price in kopecks", __LINE__);
+        check(page.ads[0].sellerName == "Alice", "advert seller", __LINE__);
+        check(page.ads[0].phoneNumberIsVisible, "visible phone", __LINE__);
+        check(page.ads[1].price == 0, "missing price becomes zero", __LINE__);
+        check(!page.ads[1].phoneNumberIsVisible, "hidden phone", __LINE__);
+
+        const Kufar::SearchPage empty = Kufar::parseSearchPage(
+            R"({"ads":[],"pagination":null,"total":0})"
+        );
+        check(empty.total == 0, "empty total", __LINE__);
+        check(empty.ads.empty(), "empty ads", __LINE__);
+        check(!empty.nextCursor.has_value(), "empty next cursor", __LINE__);
+
+        expectError(
+            [] { Kufar::parseSearchPage(R"({"total":0})"); },
+            "ads array"
+        );
+        expectError(
+            [] { Kufar::parseSearchPage("not-json"); },
+            "parse"
+        );
+    }
 }
 
 int main() {
@@ -233,7 +323,9 @@ int main() {
         {"convert every computer component type", testAllComputerComponentTypes},
         {"convert optional values", testOptionalValues},
         {"strictly reject unsupported and invalid parameters", testStrictRejection},
-        {"validate URLs before fetching", testURLValidation}
+        {"validate URLs before fetching", testURLValidation},
+        {"build search request URLs", testSearchURLBuilding},
+        {"parse a search page", testSearchPageParsing}
     };
 
     int failures = 0;

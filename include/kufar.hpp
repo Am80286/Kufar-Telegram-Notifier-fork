@@ -566,7 +566,46 @@ namespace Kufar {
         std::optional<Region> region;                   // Default: [undefined]
         std::optional<std::vector<int>> areas;          // Default: [undefined]
     };
-    
+
+    struct SearchPage {
+        std::vector<Ad> ads;
+        std::optional<std::string> nextCursor;
+        long long total = 0;
+    };
+
+    struct FetchOptions {
+        int pageSize = 200;                // Kufar caps page size at 200.
+        int delayMilliseconds = 300;       // Delay between successful pages.
+        int maxPages = 5000;               // Safety limit for very large result sets.
+        int retryCount = 3;                // Retries after a failed page request.
+        int retryDelayMilliseconds = 1000; // Delay between retries.
+    };
+
+    struct FetchResult {
+        std::vector<Ad> ads;
+        long long total = 0;
+        int pagesFetched = 0;
+        bool truncated = false;
+        std::optional<std::string> nextCursor; // Cursor for resuming a truncated crawl.
+    };
+
+    // Builds a Kufar search request URL. Exposed for testing and diagnostics.
+    std::string buildSearchURL(const KufarConfiguration &, const std::optional<std::string> &cursor = std::nullopt, const std::optional<int> &pageSize = std::nullopt);
+
+    // Parses a raw Kufar search response into a page. Exposed for testing.
+    SearchPage parseSearchPage(const std::string &rawJson, const std::optional<std::string> &tag = std::nullopt);
+
+    // Fetches a single search-results page. When cursor is set, it is sent
+    // back to Kufar to continue the previous result set.
+    SearchPage getSearchPage(const KufarConfiguration &, const std::optional<std::string> &cursor = std::nullopt, const std::optional<int> &pageSize = std::nullopt);
+
+    // Fetches every page of a search configuration, following Kufar's
+    // cursor tokens until the last page is reached.
+    //
+    // The configuration's filters are kept as-is. Callers building a market
+    // baseline should clear priceRange and sortType before calling this.
+    FetchResult getAllAds(const KufarConfiguration &, const FetchOptions &options = FetchOptions());
+
     std::vector<Ad> getAds(const KufarConfiguration &);
 
     namespace EnumString {
