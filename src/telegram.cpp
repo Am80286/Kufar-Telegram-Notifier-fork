@@ -9,7 +9,9 @@
 #include <chrono>
 #include <ctime>
 #include <exception>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -28,11 +30,20 @@ namespace Telegram {
     namespace {
         constexpr size_t MAX_IMAGES_IN_GROUP = 10;
 
-        /**
-          Builds the ad text. Same format as was used
-          when sending through the HTTP API.
-         */
-        string formatAdvert(const Kufar::Ad &ad) {
+        string formatPriceAssessment(const Market::PriceAssessment &assessment) {
+            ostringstream medianStream;
+            medianStream << fixed << setprecision(2) << assessment.baselineMedian / 100.0;
+
+            ostringstream deviationStream;
+            deviationStream << fixed << setprecision(1) << assessment.deviationPercent;
+
+            return "Медиана рынка: " + medianStream.str() +
+                    " BYN (n=" + to_string(assessment.baselineSampleCount) + ")\n"
+                    "Отклонение от медианы: " + (assessment.deviationPercent > 0.0 ? "+" : "") +
+                    deviationStream.str() + "%\n";
+        }
+
+        string formatAdvert( const Kufar::Ad &ad, const optional<Market::PriceAssessment> &priceAssessment) {
             string formattedTime = ctime(&ad.date);
             formattedTime.pop_back();
 
@@ -44,8 +55,13 @@ namespace Telegram {
 
             text += "Название: " + ad.title + "\n"
                     "Дата: " + formattedTime + "\n"
-                    "Цена: " + to_string(ad.price / 100) + " BYN\n\n"
-                    "Имя продавца: " + ad.sellerName + "\n"
+                    "Цена: " + to_string(ad.price / 100) + " BYN\n";
+
+            if (priceAssessment.has_value()) {
+                text += formatPriceAssessment(priceAssessment.value());
+            }
+
+            text += "\nИмя продавца: " + ad.sellerName + "\n"
                     "Номер телефона не скрыт: " + (ad.phoneNumberIsVisible ? "Да" : "Нет") + "\n"
                     "Ссылка: " + ad.link;
 
@@ -69,8 +85,12 @@ namespace Telegram {
         stopPolling();
     }
 
-    void Client::sendAdvert(const Kufar::Ad &ad, optional<int> threadID) const {
-        const string text = formatAdvert(ad);
+    void Client::sendAdvert(
+        const Kufar::Ad &ad,
+        optional<int> threadID,
+        const optional<Market::PriceAssessment> &priceAssessment
+    ) const {
+        const string text = formatAdvert(ad, priceAssessment);
         const int32_t threadIDValue = messageThreadID(threadID);
         const TgBot::Api &api = bot_->getApi();
 

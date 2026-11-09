@@ -15,6 +15,7 @@
 #include <thread>
 
 #include "kufar.hpp"
+#include "market.hpp"
 
 namespace TgBot {
     class Bot;
@@ -43,7 +44,11 @@ namespace Telegram {
         Client(const Client &) = delete;
         Client &operator=(const Client &) = delete;
 
-        void sendAdvert(const Kufar::Ad &, std::optional<int> messageThreadID) const;
+        void sendAdvert(
+            const Kufar::Ad &,
+            std::optional<int> messageThreadID,
+            const std::optional<Market::PriceAssessment> &priceAssessment = std::nullopt
+        ) const;
 
         void startPolling();
 

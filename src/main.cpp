@@ -23,6 +23,7 @@
 #include "logging.hpp"
 #include "arguments.hpp"
 #include "queries.hpp"
+#include "market.hpp"
 
 using namespace std;
 using namespace Kufar;
@@ -264,6 +265,7 @@ int main(int argc, char **argv) {
         );
     }
 
+    Market::MarketAnalyzer marketAnalyzer;
     Telegram::Client telegramClient(programConfiguration.telegramConfiguration, queryStore);
     telegramClient.startPolling();
 
@@ -285,7 +287,8 @@ int main(int argc, char **argv) {
                         );
 
                         try {
-                            telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID);
+                            const auto priceAssessment = marketAnalyzer.rate(requestConfiguration, advert);
+                            telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID, priceAssessment);
                             // Only ads that were actually sent are added to the cache.
                             viewedAds.push_back(advert.id);
                             saveFile(programConfiguration.files.cache.path, cacheBucketsToJSON(cacheBuckets).dump());

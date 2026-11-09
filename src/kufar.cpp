@@ -16,7 +16,6 @@
 #include "kufar.hpp"
 #include "networking.hpp"
 #include "helperfunctions.hpp"
-#include <iostream>
 
 namespace Kufar {
 
