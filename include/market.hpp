@@ -26,13 +26,17 @@
 #include "queries.hpp"
 
 namespace Market {
+    struct PriceAssessment;
+
     using Price = std::int64_t;
     using SnapshotClock = std::chrono::system_clock;
+    using RatingCallback = std::function<void(PriceAssessment)>;
 
     inline constexpr std::size_t DEFAULT_MINIMUM_SAMPLE_SIZE = 10;
     inline constexpr double OUTLIER_IQR_MULTIPLIER = 1.5;
     inline constexpr auto DEFAULT_SNAPSHOT_TTL = std::chrono::hours(6);
     inline constexpr auto DEFAULT_REFRESH_FAILURE_COOLDOWN = std::chrono::minutes(5);
+    inline constexpr std::size_t DEFAULT_DEFERRED_RATING_COUNT_LIMIT = 100;
 
     struct PriceStatistics {
         std::size_t usableSampleCount = 0;
@@ -50,6 +54,12 @@ namespace Market {
         bool outlierFilteringApplied = false;
     };
 
+    struct DeferredRating {
+        queries::QueryID id;
+        double price = 0.0; // Kopecks
+        RatingCallback callback;
+    };
+
     struct MarketSnapshot {
         PriceStatistics statistics;
         SnapshotClock::time_point fetchedAt{};
@@ -65,6 +75,15 @@ namespace Market {
         bool aboveTypicalRange = false;
 
         bool outsideTypicalRange() const;
+    };
+
+    enum class DeferredRatingStatus {
+        AddSuccess,
+        NotDeferred,
+        BadPrice,
+        BadCallback,
+        NotRefreshing,
+        RatingUnavailable,
     };
 
     std::optional<PriceStatistics> analyzePrices(
@@ -107,6 +126,14 @@ namespace Market {
 
             std::optional<PriceAssessment> rate(const queries::QueryConfiguration &queryConfiguration, const Kufar::Ad &ad);
 
+            // Ratings are delivered outside analyzer locks. Exceptions thrown
+            // by the callback are logged and never escape the analyzer worker.
+            DeferredRatingStatus rateDeferred(
+                const queries::QueryConfiguration &queryConfiguration,
+                const Kufar::Ad &ad,
+                RatingCallback callback
+            );
+
         private:
             MarketCache cache_;
             SnapshotClock::duration snapshotTTL_;
@@ -118,6 +145,10 @@ namespace Market {
             std::deque<queries::QueryConfiguration> refreshQueue_;
             std::unordered_set<queries::QueryID> refreshing_;
             std::unordered_map<queries::QueryID, SnapshotClock::time_point> nextRefreshAttempt_;
+
+            std::mutex deferMutex_;
+            std::unordered_map<queries::QueryID, std::deque<DeferredRating>> deferredCallbacks_;
+            std::deque<std::deque<DeferredRating>> readyCallbacks_;
 
             // Keep last declared so it's destroyed first
             std::jthread worker_;

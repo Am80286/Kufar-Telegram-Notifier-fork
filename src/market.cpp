@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <exception>
 #include <mutex>
 #include <optional>
@@ -17,6 +18,7 @@
 
 #include "market.hpp"
 #include "kufar.hpp"
+#include "queries.hpp"
 
 namespace Market {
     using namespace std;
@@ -40,16 +42,30 @@ namespace Market {
         double medianSorted(const std::vector<Price> &sortedPrices) {
             return quantileSorted(sortedPrices, 0.5);
         }
+
+        bool invokeRatingCallback(const RatingCallback &callback, const PriceAssessment &assessment, QueryID queryId) {
+            if (!callback) {
+                spdlog::error("[Market] Query {} has an empty deferred rating callback.", queryId);
+                return false;
+            }
+
+            try {
+                callback(assessment);
+                return true;
+            } catch (const exception &exc) {
+                spdlog::error("[Market] Query {} deferred rating callback failed: {}", queryId, exc.what());
+            } catch (...) {
+                spdlog::error("[Market] Query {} deferred rating callback failed with an unknown error.", queryId);
+            }
+            return false;
+        }
     }
 
     bool PriceAssessment::outsideTypicalRange() const {
         return belowTypicalRange || aboveTypicalRange;
     }
 
-    std::optional<PriceStatistics> analyzePrices(
-        const std::vector<Price> &prices,
-        std::size_t minimumSampleSize
-    ) {
+    std::optional<PriceStatistics> analyzePrices(const std::vector<Price> &prices, std::size_t minimumSampleSize) {
         if (minimumSampleSize == 0) {
             throw std::invalid_argument("Market minimum sample size must be positive.");
         }
@@ -227,6 +243,49 @@ namespace Market {
         return scorePrice(static_cast<Price>(ad.price), snapshot.value());
     }
 
+    DeferredRatingStatus MarketAnalyzer::rateDeferred(const QueryConfiguration &queryConfiguration, const Ad &ad, RatingCallback callback) {
+        if (ad.price <= 0) {
+            return DeferredRatingStatus::BadPrice;
+        }
+        if (!callback) {
+            return DeferredRatingStatus::BadCallback;
+        }
+
+        optional<MarketSnapshot> snapshot;
+        {
+            lock_guard<mutex> refreshLock(refreshMutex_);
+            if (refreshing_.contains(queryConfiguration.id)) {
+                lock_guard<mutex> deferLock(deferMutex_);
+                deque<DeferredRating> &deferred = deferredCallbacks_[queryConfiguration.id];
+                if (deferred.size() >= DEFAULT_DEFERRED_RATING_COUNT_LIMIT) {
+                    deferred.pop_front();
+                }
+
+                DeferredRating rating;
+                rating.id = queryConfiguration.id;
+                rating.callback = std::move(callback);
+                rating.price = ad.price;
+                deferred.push_back(std::move(rating));
+
+                return DeferredRatingStatus::AddSuccess;
+            }
+
+            snapshot = cache_.getSnapshot(queryConfiguration.id);
+        }
+
+        if (!snapshot.has_value()) {
+            return DeferredRatingStatus::NotRefreshing;
+        }
+
+        const optional<PriceAssessment> assessment = scorePrice(static_cast<Price>(ad.price), snapshot.value());
+        if (!assessment.has_value()) {
+            return DeferredRatingStatus::RatingUnavailable;
+        }
+
+        invokeRatingCallback(callback, assessment.value(), queryConfiguration.id);
+        return DeferredRatingStatus::NotDeferred;
+    }
+
     void MarketAnalyzer::requestRefresh(const QueryConfiguration &queryConfiguration, SnapshotClock::time_point now) {
         {
             lock_guard<mutex> lock(refreshMutex_);
@@ -267,6 +326,33 @@ namespace Market {
             lock.unlock();
 
             runCrawl(std::move(queryConfiguration));
+
+            while (!readyCallbacks_.empty()) {
+                deque<DeferredRating> toRun = std::move(readyCallbacks_.front());
+                readyCallbacks_.pop_front();
+                if (toRun.empty()) {
+                    continue;
+                }
+
+                const optional<MarketSnapshot> snapshot = cache_.getSnapshot(toRun.front().id);
+                while (!toRun.empty()) {
+                    DeferredRating rating = std::move(toRun.front());
+                    toRun.pop_front();
+
+                    if (!snapshot.has_value()) {
+                        spdlog::warn("[Market] Query {} has no snapshot for a deferred rating.", rating.id);
+                        continue;
+                    }
+
+                    const optional<PriceAssessment> assessment = scorePrice(static_cast<Price>(rating.price), snapshot.value());
+                    if (!assessment.has_value()) {
+                        spdlog::warn("[Market] Query {} could not score a deferred rating.", rating.id);
+                        continue;
+                    }
+
+                    invokeRatingCallback(rating.callback, assessment.value(), rating.id);
+                }
+            }
         }
     }
 
@@ -306,7 +392,38 @@ namespace Market {
         refreshing_.erase(queryConfiguration.id);
         if (published) {
             nextRefreshAttempt_.erase(queryConfiguration.id);
+
+            deque<DeferredRating> ready;
+            {
+                lock_guard<mutex> deferLock(deferMutex_);
+                const auto deferred = deferredCallbacks_.find(queryConfiguration.id);
+                if (deferred != deferredCallbacks_.end()) {
+                    ready.swap(deferred->second);
+                    deferredCallbacks_.erase(deferred);
+                }
+            }
+            if (!ready.empty()) {
+                readyCallbacks_.push_back(std::move(ready));
+            }
         } else {
+            size_t discarded = 0;
+            {
+                lock_guard<mutex> deferLock(deferMutex_);
+                const auto deferred = deferredCallbacks_.find(queryConfiguration.id);
+                if (deferred != deferredCallbacks_.end()) {
+                    discarded = deferred->second.size();
+                    deferredCallbacks_.erase(deferred);
+                }
+            }
+
+            if (discarded > 0) {
+                spdlog::warn(
+                    "[Market] Query {} discarded {} deferred rating(s) after a failed refresh.",
+                    queryConfiguration.id,
+                    discarded
+                );
+            }
+
             nextRefreshAttempt_[queryConfiguration.id] = SnapshotClock::now() + refreshFailureCooldown_;
         }
     }

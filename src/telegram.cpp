@@ -6,12 +6,15 @@
 //
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <exception>
 #include <iomanip>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -22,6 +25,7 @@
 #include "telegram.hpp"
 #include "telegram_commands.hpp"
 #include "queries.hpp"
+#include "tgbot/Types.h"
 
 namespace Telegram {
     using namespace std;
@@ -38,14 +42,20 @@ namespace Telegram {
             deviationStream << fixed << setprecision(1) << assessment.deviationPercent;
 
             return "Медиана рынка: " + medianStream.str() +
-                    " BYN (n=" + to_string(assessment.baselineSampleCount) + ")\n"
                     "Отклонение от медианы: " + (assessment.deviationPercent > 0.0 ? "+" : "") +
                     deviationStream.str() + "%\n";
         }
 
-        string formatAdvert( const Kufar::Ad &ad, const optional<Market::PriceAssessment> &priceAssessment) {
-            string formattedTime = ctime(&ad.date);
-            formattedTime.pop_back();
+        string formatAdvert(const Kufar::Ad &ad, const optional<Market::PriceAssessment> &priceAssessment) {
+            array<char, 26> timeBuffer{};
+            if (ctime_r(&ad.date, timeBuffer.data()) == nullptr) {
+                throw runtime_error("Unable to format advert timestamp.");
+            }
+
+            string formattedTime = timeBuffer.data();
+            if (!formattedTime.empty() && formattedTime.back() == '\n') {
+                formattedTime.pop_back();
+            }
 
             string text;
 
@@ -85,7 +95,33 @@ namespace Telegram {
         stopPolling();
     }
 
-    void Client::sendAdvert(
+    void Client::editAdvertAssessment(
+        const TgBot::Message::Ptr &message,
+        const Kufar::Ad &ad,
+        const Market::PriceAssessment &assessment
+    ) const {
+        if (message == nullptr)
+            return;
+
+        const TgBot::Api &api = bot_->getApi();
+        const string newAdvertText = formatAdvert(ad, assessment);
+
+        if (ad.images.empty()) {
+            TgBot::EditMessageTextArgs args;
+            args.chatId = configuration_.chatID;
+            args.messageId = message->messageId;
+            args.text = newAdvertText;
+            api.editMessageText(args);
+        } else {
+            TgBot::EditMessageCaptionArgs args;
+            args.chatId = configuration_.chatID;
+            args.messageId = message->messageId;
+            args.caption = newAdvertText;
+            api.editMessageCaption(args);
+        }
+    }
+
+    TgBot::Message::Ptr Client::sendAdvert(
         const Kufar::Ad &ad,
         optional<int> threadID,
         const optional<Market::PriceAssessment> &priceAssessment
@@ -101,8 +137,7 @@ namespace Telegram {
             args.chatId = configuration_.chatID;
             args.text = text;
             args.messageThreadId = threadIDValue;
-            api.sendMessage(args);
-            return;
+            return api.sendMessage(args);
         }
 
         if (ad.images.size() == 1) {
@@ -111,8 +146,7 @@ namespace Telegram {
             args.photo = ad.images.front();
             args.caption = text;
             args.messageThreadId = threadIDValue;
-            api.sendPhoto(args);
-            return;
+            return api.sendPhoto(args);
         }
 
         TgBot::SendMediaGroupArgs args;
@@ -131,7 +165,15 @@ namespace Telegram {
             args.media.push_back(photo);
         }
 
-        api.sendMediaGroup(args);
+        const auto messages = api.sendMediaGroup(args);
+        for (const auto &messagePtr : messages) {
+            if (messagePtr) {
+                return messagePtr;
+            }
+        }
+
+        spdlog::warn("[Telegram]: Media group was sent but Telegram returned no messages.");
+        return nullptr;
     }
 
     void Client::startPolling() {

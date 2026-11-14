@@ -265,8 +265,8 @@ int main(int argc, char **argv) {
         );
     }
 
-    Market::MarketAnalyzer marketAnalyzer;
     Telegram::Client telegramClient(programConfiguration.telegramConfiguration, queryStore);
+    Market::MarketAnalyzer marketAnalyzer;
     telegramClient.startPolling();
 
     while (true) {
@@ -288,10 +288,21 @@ int main(int argc, char **argv) {
 
                         try {
                             const auto priceAssessment = marketAnalyzer.rate(requestConfiguration, advert);
-                            telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID, priceAssessment);
+                            const auto adMessage = telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID, priceAssessment);
+
                             // Only ads that were actually sent are added to the cache.
                             viewedAds.push_back(advert.id);
                             saveFile(programConfiguration.files.cache.path, cacheBucketsToJSON(cacheBuckets).dump());
+
+                            if (!priceAssessment.has_value() && adMessage != nullptr) {
+                                marketAnalyzer.rateDeferred(
+                                    requestConfiguration,
+                                    advert,
+                                    [&telegramClient, adMessage, advert](Market::PriceAssessment newAssessment) {
+                                        telegramClient.editAdvertAssessment(adMessage, advert, newAssessment);
+                                    }
+                                );
+                            }
                         } catch (const exception &exc) {
                             spdlog::error("(sendAdvert) [Topic: {}]: {}", cacheKey, exc.what());
                         }
