@@ -115,8 +115,8 @@ namespace Telegram {
         boost::asio::post(thread_pool_, [this, message, url = std::move(url)] {
             try {
                 json newQuery = importSearchQuery(url);
-                if (message->messageThreadId)
-                    newQuery["message-thread-id"] = message->messageThreadId;
+                if (message->messageThreadId.has_value())
+                    newQuery["message-thread-id"] = message->messageThreadId.value();
 
                 queryStore_.add(newQuery);
                 reply(message, "Поиск добавлен");
