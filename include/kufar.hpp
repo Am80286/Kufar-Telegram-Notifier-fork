@@ -494,6 +494,13 @@ namespace Kufar {
         
     };
 
+    struct AdParameter {
+        std::string name;                  // Kufar's "p" field
+        std::optional<std::string> value;  // Kufar's "v" field, stringified
+        std::optional<std::string> label;  // Kufar's "vl" field
+        std::optional<std::string> unit;   // Kufar's "pu" field
+    };
+
     struct Ad {
         std::optional<std::string> tag;
         std::string title;
@@ -504,6 +511,12 @@ namespace Kufar {
         bool phoneNumberIsVisible;
         std::string link;
         std::vector<std::string> images;
+
+        // Kufar's search payload exposes the leaf category as "category".
+        // `subCategory` keeps that leaf code; `category` is its parent code.
+        std::optional<int> category;
+        std::optional<int> subCategory;
+        std::vector<AdParameter> adParameters;
     };
 
     struct PriceRange {

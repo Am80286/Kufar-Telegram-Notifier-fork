@@ -287,7 +287,7 @@ int main(int argc, char **argv) {
                         );
 
                         try {
-                            const auto priceAssessment = marketAnalyzer.rate(requestConfiguration, advert);
+                            const auto priceAssessment = marketAnalyzer.rate(advert);
                             const auto adMessage = telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID, priceAssessment);
 
                             // Only ads that were actually sent are added to the cache.
@@ -296,7 +296,6 @@ int main(int argc, char **argv) {
 
                             if (!priceAssessment.has_value() && adMessage != nullptr) {
                                 marketAnalyzer.rateDeferred(
-                                    requestConfiguration,
                                     advert,
                                     [&telegramClient, adMessage, advert](Market::PriceAssessment newAssessment) {
                                         telegramClient.editAdvertAssessment(adMessage, advert, newAssessment);

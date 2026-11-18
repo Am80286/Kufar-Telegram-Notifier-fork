@@ -264,7 +264,14 @@ namespace {
                     "price_byn": "310000",
                     "phone_hidden": false,
                     "ad_link": "https://www.kufar.by/item/1001",
+                    "category": "16010",
                     "account_parameters": [{"p": "name", "v": "Alice"}],
+                    "ad_parameters": [
+                        {"pl": "Подкатегория", "vl": "Комплектующие", "p": "category", "v": 16010, "pu": "cat"},
+                        {"pl": "Тип", "vl": "Видеокарты", "p": "computers_component_type", "v": "11", "pu": "cct"},
+                        {"pl": "Графический процессор", "vl": "GeForce RTX 3060", "p": "computers_component_videocard_cpu", "v": "14", "pu": "ccvc"},
+                        {"pl": "Состояние", "vl": "Б/у", "p": "condition", "v": "1", "pu": "cnd"}
+                    ],
                     "images": []
                 },
                 {
@@ -273,7 +280,10 @@ namespace {
                     "list_time": "2026-11-09T09:42:49Z",
                     "price_byn": null,
                     "phone_hidden": true,
-                    "ad_link": "https://www.kufar.by/item/1002"
+                    "ad_link": "https://www.kufar.by/item/1002",
+                    "ad_parameters": [
+                        {"pl": "Подкатегория", "vl": "Комплектующие", "p": "category", "v": "16010", "pu": "cat"}
+                    ]
                 }
             ],
             "pagination": {
@@ -295,8 +305,18 @@ namespace {
         check(page.ads[0].price == 310000, "advert price in kopecks", __LINE__);
         check(page.ads[0].sellerName == "Alice", "advert seller", __LINE__);
         check(page.ads[0].phoneNumberIsVisible, "visible phone", __LINE__);
+        check(page.ads[0].subCategory == 16010, "advert subcategory", __LINE__);
+        check(page.ads[0].category == 16000, "advert parent category", __LINE__);
+        check(page.ads[0].adParameters.size() == 4, "advert parameter count", __LINE__);
+        check(page.ads[0].adParameters[1].name == "computers_component_type", "component parameter name", __LINE__);
+        check(page.ads[0].adParameters[1].value == "11", "component parameter value", __LINE__);
+        check(page.ads[0].adParameters[1].label == "Видеокарты", "component parameter label", __LINE__);
+        check(page.ads[0].adParameters[1].unit == "cct", "component parameter unit", __LINE__);
         check(page.ads[1].price == 0, "missing price becomes zero", __LINE__);
         check(!page.ads[1].phoneNumberIsVisible, "hidden phone", __LINE__);
+        check(page.ads[1].subCategory == 16010, "subcategory from ad parameters", __LINE__);
+        check(page.ads[1].category == 16000, "parent category from ad parameters", __LINE__);
+        check(page.ads[1].adParameters.size() == 1, "fallback parameter count", __LINE__);
 
         const Kufar::SearchPage empty = Kufar::parseSearchPage(
             R"({"ads":[],"pagination":null,"total":0})"

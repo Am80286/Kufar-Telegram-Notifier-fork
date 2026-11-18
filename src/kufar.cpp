@@ -119,6 +119,71 @@ namespace Kufar {
             }
         }
 
+        optional<int> parseIntegerValue(const string &text) {
+            if (text.empty()) {
+                return nullopt;
+            }
+
+            try {
+                return stoi(text);
+            } catch (...) {
+                return nullopt;
+            }
+        }
+
+        optional<int> parseIntegerValue(const json &value) {
+            if (value.is_number_integer()) {
+                return value.get<int>();
+            }
+            if (value.is_string()) {
+                return parseIntegerValue(value.get<string>());
+            }
+            return nullopt;
+        }
+
+        optional<string> scalarToString(const json &value) {
+            if (value.is_null()) {
+                return nullopt;
+            }
+            if (value.is_string()) {
+                return value.get<string>();
+            }
+            return value.dump();
+        }
+
+        optional<AdParameter> parseAdParameter(const json &parameter) {
+            if (!parameter.is_object() ||
+                !parameter.contains("p") ||
+                !parameter.at("p").is_string()) {
+                return nullopt;
+            }
+
+            AdParameter parsed;
+            parsed.name = parameter.at("p").get<string>();
+
+            if (parameter.contains("v")) {
+                parsed.value = scalarToString(parameter.at("v"));
+            }
+            if (parameter.contains("vl")) {
+                parsed.label = scalarToString(parameter.at("vl"));
+            }
+            if (parameter.contains("pu")) {
+                parsed.unit = scalarToString(parameter.at("pu"));
+            }
+
+            return parsed;
+        }
+
+        optional<int> parentCategory(int subCategory) {
+            if (subCategory <= 0) {
+                return nullopt;
+            }
+
+            // Kufar's leaf category codes are nested under the parent's
+            // thousand-wide range, e.g. 16010 under 16000.
+            return (subCategory / 1000) * 1000;
+        }
+
         Ad parseAdvert(const json &ad, const optional<string> &tag) {
             Ad advert;
 
@@ -136,6 +201,33 @@ namespace Kufar {
                 ad.at("phone_hidden").get<bool>()
             );
             advert.link = ad.at("ad_link");
+
+            if (ad.contains("category")) {
+                advert.subCategory = parseIntegerValue(ad.at("category"));
+            }
+
+            if (ad.contains("ad_parameters") && ad.at("ad_parameters").is_array()) {
+                for (const auto &parameter : ad.at("ad_parameters")) {
+                    const optional<AdParameter> parsedParameter = parseAdParameter(parameter);
+                    if (!parsedParameter.has_value()) {
+                        continue;
+                    }
+
+                    if (
+                        !advert.subCategory.has_value() &&
+                        parsedParameter->name == "category" &&
+                        parsedParameter->value.has_value()
+                    ) {
+                        advert.subCategory = parseIntegerValue(parsedParameter->value.value());
+                    }
+
+                    advert.adParameters.push_back(parsedParameter.value());
+                }
+            }
+
+            if (advert.subCategory.has_value()) {
+                advert.category = parentCategory(advert.subCategory.value());
+            }
 
             if (ad.contains("account_parameters") && ad.at("account_parameters").is_array()) {
                 for (const auto &accountParameter : ad.at("account_parameters")) {

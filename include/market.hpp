@@ -23,7 +23,7 @@
 #include <vector>
 
 #include "kufar.hpp"
-#include "queries.hpp"
+#include "market_normalizer.hpp"
 
 namespace Market {
     struct PriceAssessment;
@@ -33,10 +33,12 @@ namespace Market {
     using RatingCallback = std::function<void(PriceAssessment)>;
 
     inline constexpr std::size_t DEFAULT_MINIMUM_SAMPLE_SIZE = 10;
+    inline constexpr std::size_t FALLBACK_MINIMUM_SAMPLE_SIZE = 5;
     inline constexpr double OUTLIER_IQR_MULTIPLIER = 1.5;
     inline constexpr auto DEFAULT_SNAPSHOT_TTL = std::chrono::hours(6);
     inline constexpr auto DEFAULT_REFRESH_FAILURE_COOLDOWN = std::chrono::minutes(5);
     inline constexpr std::size_t DEFAULT_DEFERRED_RATING_COUNT_LIMIT = 100;
+    inline constexpr int DEFAULT_MARKET_CRAWL_DELAY_MILLISECONDS = 150;
 
     struct PriceStatistics {
         std::size_t usableSampleCount = 0;
@@ -55,7 +57,7 @@ namespace Market {
     };
 
     struct DeferredRating {
-        queries::QueryID id;
+        MarketKey key;
         double price = 0.0; // Kopecks
         RatingCallback callback;
     };
@@ -73,6 +75,7 @@ namespace Market {
         std::size_t baselineSampleCount = 0;
         bool belowTypicalRange = false;
         bool aboveTypicalRange = false;
+        bool baseFallback = false;
 
         bool outsideTypicalRange() const;
     };
@@ -82,6 +85,7 @@ namespace Market {
         NotDeferred,
         BadPrice,
         BadCallback,
+        NotRateable,
         NotRefreshing,
         RatingUnavailable,
     };
@@ -97,17 +101,30 @@ namespace Market {
         std::size_t minimumSampleSize = DEFAULT_MINIMUM_SAMPLE_SIZE
     );
 
+    using MarketSnapshotMap = std::unordered_map<MarketKey, MarketSnapshot, MarketKeyHash>;
+
+    // Builds snapshots for every market represented in the crawl. Exact
+    // variant keys require the higher threshold; base-model fallback keys
+    // require the lower threshold.
+    MarketSnapshotMap buildSnapshots(
+        const Kufar::FetchResult &fetchResult,
+        const MarketNormalizerRegistry &normalizers,
+        SnapshotClock::time_point fetchedAt = SnapshotClock::now(),
+        std::size_t exactMinimumSampleSize = DEFAULT_MINIMUM_SAMPLE_SIZE,
+        std::size_t fallbackMinimumSampleSize = FALLBACK_MINIMUM_SAMPLE_SIZE
+    );
+
     std::optional<PriceAssessment> scorePrice(Price price, const MarketSnapshot &snapshot);
 
     class MarketCache {
         public:
-            std::optional<MarketSnapshot> getSnapshot(queries::QueryID key) const;
-            void publish(queries::QueryID queryId, MarketSnapshot snapshot);
-            void remove(queries::QueryID queryId);
+            std::optional<MarketSnapshot> getSnapshot(const MarketKey &key) const;
+            void publish(const MarketKey &key, MarketSnapshot snapshot);
+            void remove(const MarketKey &key);
 
         private:
             mutable std::mutex mtx_;
-            std::unordered_map<queries::QueryID, MarketSnapshot> snapshots_;
+            std::unordered_map<MarketKey, MarketSnapshot, MarketKeyHash> snapshots_;
     };
 
     class MarketAnalyzer {
@@ -117,45 +134,62 @@ namespace Market {
             explicit MarketAnalyzer(
                 SnapshotClock::duration snapshotTTL = DEFAULT_SNAPSHOT_TTL,
                 SnapshotClock::duration refreshFailureCooldown = DEFAULT_REFRESH_FAILURE_COOLDOWN,
-                CrawlFunction crawlFunction = CrawlFunction()
+                CrawlFunction crawlFunction = CrawlFunction(),
+                MarketNormalizerRegistry normalizers = createDefaultMarketNormalizerRegistry()
             );
             ~MarketAnalyzer();
 
             MarketAnalyzer(const MarketAnalyzer &) = delete;
             MarketAnalyzer &operator=(const MarketAnalyzer &) = delete;
 
-            std::optional<PriceAssessment> rate(const queries::QueryConfiguration &queryConfiguration, const Kufar::Ad &ad);
+            std::optional<PriceAssessment> rate(const Kufar::Ad &ad);
 
             // Ratings are delivered outside analyzer locks. Exceptions thrown
             // by the callback are logged and never escape the analyzer worker.
             DeferredRatingStatus rateDeferred(
-                const queries::QueryConfiguration &queryConfiguration,
                 const Kufar::Ad &ad,
                 RatingCallback callback
             );
 
         private:
+            struct RefreshRequest {
+                MarketCrawlScope scope;
+            };
+
             MarketCache cache_;
             SnapshotClock::duration snapshotTTL_;
             SnapshotClock::duration refreshFailureCooldown_;
             CrawlFunction crawlFunction_;
+            MarketNormalizerRegistry normalizers_;
 
             std::mutex refreshMutex_;
             std::condition_variable refreshCondition_;
-            std::deque<queries::QueryConfiguration> refreshQueue_;
-            std::unordered_set<queries::QueryID> refreshing_;
-            std::unordered_map<queries::QueryID, SnapshotClock::time_point> nextRefreshAttempt_;
+            std::deque<RefreshRequest> refreshQueue_;
+            std::unordered_set<std::string> refreshingScopes_;
+            std::unordered_map<std::string, SnapshotClock::time_point> nextRefreshAttempt_;
+            std::unordered_map<std::string, SnapshotClock::time_point> scopeCrawlStartedAt_;
 
             std::mutex deferMutex_;
-            std::unordered_map<queries::QueryID, std::deque<DeferredRating>> deferredCallbacks_;
+            std::unordered_map<std::string, std::deque<DeferredRating>> deferredCallbacks_;
             std::deque<std::deque<DeferredRating>> readyCallbacks_;
 
             // Keep last declared so it's destroyed first
             std::jthread worker_;
 
-            void requestRefresh(const queries::QueryConfiguration &queryConfiguration, SnapshotClock::time_point now);
+            struct SnapshotMatch {
+                MarketSnapshot snapshot;
+                bool baseFallback = false;
+            };
+
+            std::optional<SnapshotMatch> findSnapshot(const MarketKey &key) const;
+
+            void requestRefresh(
+                const MarketCrawlScope &scope,
+                SnapshotClock::time_point now,
+                std::optional<std::time_t> missingAdDate = std::nullopt
+            );
             void workerLoop(std::stop_token stopToken);
-            void runCrawl(queries::QueryConfiguration queryConfiguration);
+            void runCrawl(RefreshRequest request);
     };
 }
 

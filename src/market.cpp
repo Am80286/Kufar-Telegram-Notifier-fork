@@ -18,14 +18,15 @@
 
 #include "market.hpp"
 #include "kufar.hpp"
-#include "queries.hpp"
+#include "market_normalizer.hpp"
 
 namespace Market {
     using namespace std;
-    using namespace queries;
     using namespace Kufar;
 
     namespace {
+        constexpr time_t AD_DATE_TOLERANCE_SECONDS = 60;
+
         // Type 7 quantile: linear interpolation at (n - 1) * probability.
         // The input must be nonempty and sorted in ascending order
         double quantileSorted(const std::vector<Price> &sortedPrices, double probability) {
@@ -43,9 +44,9 @@ namespace Market {
             return quantileSorted(sortedPrices, 0.5);
         }
 
-        bool invokeRatingCallback(const RatingCallback &callback, const PriceAssessment &assessment, QueryID queryId) {
+        bool invokeRatingCallback(const RatingCallback &callback, const PriceAssessment &assessment, const MarketKey &key) {
             if (!callback) {
-                spdlog::error("[Market] Query {} has an empty deferred rating callback.", queryId);
+                spdlog::error("[Market] {} has an empty deferred rating callback.", key.toString());
                 return false;
             }
 
@@ -53,9 +54,9 @@ namespace Market {
                 callback(assessment);
                 return true;
             } catch (const exception &exc) {
-                spdlog::error("[Market] Query {} deferred rating callback failed: {}", queryId, exc.what());
+                spdlog::error("[Market] {} deferred rating callback failed: {}", key.toString(), exc.what());
             } catch (...) {
-                spdlog::error("[Market] Query {} deferred rating callback failed with an unknown error.", queryId);
+                spdlog::error("[Market] {} deferred rating callback failed with an unknown error.", key.toString());
             }
             return false;
         }
@@ -142,6 +143,70 @@ namespace Market {
         return snapshot;
     }
 
+    MarketSnapshotMap buildSnapshots(
+        const Kufar::FetchResult &fetchResult,
+        const MarketNormalizerRegistry &normalizers,
+        SnapshotClock::time_point fetchedAt,
+        std::size_t exactMinimumSampleSize,
+        std::size_t fallbackMinimumSampleSize
+    ) {
+        if (exactMinimumSampleSize == 0 || fallbackMinimumSampleSize == 0) {
+            throw std::invalid_argument("Market minimum sample sizes must be positive.");
+        }
+
+        std::unordered_map<MarketKey, std::vector<Price>, MarketKeyHash> exactPrices;
+        std::unordered_map<MarketKey, std::vector<Price>, MarketKeyHash> basePrices;
+
+        for (const Kufar::Ad &ad : fetchResult.ads) {
+            const NormalizationResult normalized = normalizers.normalize(ad);
+            if (!normalized.key.has_value()) {
+                continue;
+            }
+
+            const MarketKey &key = normalized.key.value();
+            const Price price = static_cast<Price>(ad.price);
+            exactPrices[key].push_back(price);
+            basePrices[key.baseModel()].push_back(price);
+        }
+
+        const auto build = [&](const std::vector<Price> &prices, std::size_t minimumSampleSize) {
+            std::optional<PriceStatistics> statistics = analyzePrices(prices, minimumSampleSize);
+            if (!statistics.has_value()) {
+                return std::optional<MarketSnapshot>();
+            }
+
+            MarketSnapshot snapshot;
+            snapshot.statistics = std::move(statistics.value());
+            snapshot.fetchedAt = fetchedAt;
+            snapshot.crawledListingCount = fetchResult.ads.size();
+            snapshot.truncated = fetchResult.truncated;
+            return std::optional<MarketSnapshot>(std::move(snapshot));
+        };
+
+        MarketSnapshotMap snapshots;
+
+        for (const auto &[key, prices] : exactPrices) {
+            const std::size_t minimumSampleSize = key.variant.empty() ? fallbackMinimumSampleSize : exactMinimumSampleSize;
+            std::optional<MarketSnapshot> snapshot = build(prices, minimumSampleSize);
+            if (snapshot.has_value()) {
+                snapshots.emplace(key, std::move(snapshot.value()));
+            }
+        }
+
+        for (const auto &[key, prices] : basePrices) {
+            if (snapshots.contains(key)) {
+                continue;
+            }
+
+            std::optional<MarketSnapshot> snapshot = build(prices, fallbackMinimumSampleSize);
+            if (snapshot.has_value()) {
+                snapshots.emplace(key, std::move(snapshot.value()));
+            }
+        }
+
+        return snapshots;
+    }
+
     std::optional<PriceAssessment> scorePrice(Price price, const MarketSnapshot &snapshot) {
         const PriceStatistics &statistics = snapshot.statistics;
         const double baselineMedian = statistics.filteredMedian;
@@ -171,7 +236,7 @@ namespace Market {
         return assessment;
     }
 
-    optional<MarketSnapshot> MarketCache::getSnapshot(QueryID key) const {
+    optional<MarketSnapshot> MarketCache::getSnapshot(const MarketKey &key) const {
         lock_guard<std::mutex> lock(mtx_);
 
         const auto it = snapshots_.find(key);
@@ -181,23 +246,25 @@ namespace Market {
         return it->second;
     }
 
-    void MarketCache::publish(QueryID queryId, MarketSnapshot snapshot) {
+    void MarketCache::publish(const MarketKey &key, MarketSnapshot snapshot) {
         lock_guard<std::mutex> lock(mtx_);
-        snapshots_.insert_or_assign(queryId, std::move(snapshot));
+        snapshots_.insert_or_assign(key, std::move(snapshot));
     }
 
-    void MarketCache::remove(QueryID queryId) {
+    void MarketCache::remove(const MarketKey &key) {
         lock_guard<std::mutex> lock(mtx_);
-        snapshots_.erase(queryId);
+        snapshots_.erase(key);
     }
 
     MarketAnalyzer::MarketAnalyzer(
         SnapshotClock::duration snapshotTTL,
         SnapshotClock::duration refreshFailureCooldown,
-        CrawlFunction crawlFunction
+        CrawlFunction crawlFunction,
+        MarketNormalizerRegistry normalizers
     ) : snapshotTTL_(snapshotTTL),
         refreshFailureCooldown_(refreshFailureCooldown),
-        crawlFunction_(std::move(crawlFunction)) {
+        crawlFunction_(std::move(crawlFunction)),
+        normalizers_(std::move(normalizers)) {
         if (snapshotTTL_ < SnapshotClock::duration::zero()) {
             throw invalid_argument("Market snapshot TTL must not be negative.");
         }
@@ -206,7 +273,9 @@ namespace Market {
         }
         if (!crawlFunction_) {
             crawlFunction_ = [](const KufarConfiguration &configuration) {
-                return getAllAds(configuration);
+                FetchOptions options;
+                options.delayMilliseconds = DEFAULT_MARKET_CRAWL_DELAY_MILLISECONDS;
+                return getAllAds(configuration, options);
             };
         }
 
@@ -223,27 +292,68 @@ namespace Market {
         }
     }
 
-    optional<PriceAssessment> MarketAnalyzer::rate(const QueryConfiguration &queryConfiguration, const Ad &ad) {
+    optional<MarketAnalyzer::SnapshotMatch> MarketAnalyzer::findSnapshot(const MarketKey &key) const {
+        optional<MarketSnapshot> exact = cache_.getSnapshot(key);
+        if (exact.has_value()) {
+            SnapshotMatch match;
+            match.snapshot = std::move(exact.value());
+            return match;
+        }
+
+        const MarketKey baseKey = key.baseModel();
+        if (baseKey == key) {
+            return nullopt;
+        }
+
+        optional<MarketSnapshot> fallback = cache_.getSnapshot(baseKey);
+        if (!fallback.has_value()) {
+            return nullopt;
+        }
+
+        SnapshotMatch match;
+        match.snapshot = std::move(fallback.value());
+        match.baseFallback = true;
+        return match;
+    }
+
+    optional<PriceAssessment> MarketAnalyzer::rate(const Ad &ad) {
         if (ad.price <= 0) {
             return nullopt;
         }
 
-        optional<MarketSnapshot> snapshot = cache_.getSnapshot(queryConfiguration.id);
-        const SnapshotClock::time_point now = SnapshotClock::now();
-        const bool refreshNeeded = !snapshot.has_value() || now - snapshot->fetchedAt >= snapshotTTL_;
-
-        if (refreshNeeded) {
-            requestRefresh(queryConfiguration, now);
-        }
-
-        if (!snapshot.has_value()) {
+        const NormalizationResult normalized = normalizers_.normalize(ad);
+        if (!normalized.key.has_value() || normalized.normalizer == nullptr) {
+            spdlog::debug("[Market] Ad {} is not rateable: {}", ad.id, normalized.reason);
             return nullopt;
         }
 
-        return scorePrice(static_cast<Price>(ad.price), snapshot.value());
+        const MarketKey &key = normalized.key.value();
+        const optional<MarketCrawlScope> scope = normalized.normalizer->buildCrawlScope(key);
+        if (!scope.has_value()) {
+            spdlog::warn("[Market] {} has no crawl scope.", key.toString());
+            return nullopt;
+        }
+
+        const optional<SnapshotMatch> match = findSnapshot(key);
+        const SnapshotClock::time_point now = SnapshotClock::now();
+
+        if (!match.has_value()) {
+            requestRefresh(scope.value(), now, ad.date);
+            return nullopt;
+        }
+
+        if (now - match->snapshot.fetchedAt >= snapshotTTL_) {
+            requestRefresh(scope.value(), now);
+        }
+
+        optional<PriceAssessment> assessment = scorePrice(static_cast<Price>(ad.price), match->snapshot);
+        if (assessment.has_value()) {
+            assessment->baseFallback = match->baseFallback;
+        }
+        return assessment;
     }
 
-    DeferredRatingStatus MarketAnalyzer::rateDeferred(const QueryConfiguration &queryConfiguration, const Ad &ad, RatingCallback callback) {
+    DeferredRatingStatus MarketAnalyzer::rateDeferred(const Ad &ad, RatingCallback callback) {
         if (ad.price <= 0) {
             return DeferredRatingStatus::BadPrice;
         }
@@ -251,18 +361,29 @@ namespace Market {
             return DeferredRatingStatus::BadCallback;
         }
 
-        optional<MarketSnapshot> snapshot;
+        const NormalizationResult normalized = normalizers_.normalize(ad);
+        if (!normalized.key.has_value() || normalized.normalizer == nullptr) {
+            return DeferredRatingStatus::NotRateable;
+        }
+
+        const MarketKey &key = normalized.key.value();
+        const optional<MarketCrawlScope> scope = normalized.normalizer->buildCrawlScope(key);
+        if (!scope.has_value()) {
+            return DeferredRatingStatus::NotRateable;
+        }
+
+        optional<SnapshotMatch> match;
         {
             lock_guard<mutex> refreshLock(refreshMutex_);
-            if (refreshing_.contains(queryConfiguration.id)) {
+            if (refreshingScopes_.contains(scope->id)) {
                 lock_guard<mutex> deferLock(deferMutex_);
-                deque<DeferredRating> &deferred = deferredCallbacks_[queryConfiguration.id];
+                deque<DeferredRating> &deferred = deferredCallbacks_[scope->id];
                 if (deferred.size() >= DEFAULT_DEFERRED_RATING_COUNT_LIMIT) {
                     deferred.pop_front();
                 }
 
                 DeferredRating rating;
-                rating.id = queryConfiguration.id;
+                rating.key = key;
                 rating.callback = std::move(callback);
                 rating.price = ad.price;
                 deferred.push_back(std::move(rating));
@@ -270,42 +391,54 @@ namespace Market {
                 return DeferredRatingStatus::AddSuccess;
             }
 
-            snapshot = cache_.getSnapshot(queryConfiguration.id);
+            match = findSnapshot(key);
         }
 
-        if (!snapshot.has_value()) {
+        if (!match.has_value()) {
             return DeferredRatingStatus::NotRefreshing;
         }
 
-        const optional<PriceAssessment> assessment = scorePrice(static_cast<Price>(ad.price), snapshot.value());
+        optional<PriceAssessment> assessment =
+            scorePrice(static_cast<Price>(ad.price), match->snapshot);
         if (!assessment.has_value()) {
             return DeferredRatingStatus::RatingUnavailable;
         }
 
-        invokeRatingCallback(callback, assessment.value(), queryConfiguration.id);
+        assessment->baseFallback = match->baseFallback;
+        invokeRatingCallback(callback, assessment.value(), key);
         return DeferredRatingStatus::NotDeferred;
     }
 
-    void MarketAnalyzer::requestRefresh(const QueryConfiguration &queryConfiguration, SnapshotClock::time_point now) {
+    void MarketAnalyzer::requestRefresh(
+        const MarketCrawlScope &scope,
+        SnapshotClock::time_point now,
+        std::optional<time_t> missingAdDate
+    ) {
         {
             lock_guard<mutex> lock(refreshMutex_);
-            if (refreshing_.contains(queryConfiguration.id)) {
+            if (refreshingScopes_.contains(scope.id)) {
                 return;
             }
 
-            // Time of check time of use shit 
-            const optional<MarketSnapshot> currentSnapshot = cache_.getSnapshot(queryConfiguration.id);
-            if (currentSnapshot.has_value() && now - currentSnapshot->fetchedAt < snapshotTTL_) {
-                return;
-            }
-
-            const auto retry = nextRefreshAttempt_.find(queryConfiguration.id);
+            const auto retry = nextRefreshAttempt_.find(scope.id);
             if (retry != nextRefreshAttempt_.end() && now < retry->second) {
                 return;
             }
 
-            refreshing_.insert(queryConfiguration.id);
-            refreshQueue_.push_back(queryConfiguration);
+            if (missingAdDate.has_value()) {
+                const auto lastCrawl = scopeCrawlStartedAt_.find(scope.id);
+                if (lastCrawl != scopeCrawlStartedAt_.end()) {
+                    const time_t lastCrawlStart = SnapshotClock::to_time_t(lastCrawl->second);
+                    if (missingAdDate.value() + AD_DATE_TOLERANCE_SECONDS < lastCrawlStart) {
+                        return;
+                    }
+                }
+            }
+
+            refreshingScopes_.insert(scope.id);
+            RefreshRequest request;
+            request.scope = scope;
+            refreshQueue_.push_back(std::move(request));
         }
         refreshCondition_.notify_one();
     }
@@ -321,11 +454,11 @@ namespace Market {
                 return;
             }
 
-            QueryConfiguration queryConfiguration = std::move(refreshQueue_.front());
+            RefreshRequest request = std::move(refreshQueue_.front());
             refreshQueue_.pop_front();
             lock.unlock();
 
-            runCrawl(std::move(queryConfiguration));
+            runCrawl(std::move(request));
 
             while (!readyCallbacks_.empty()) {
                 deque<DeferredRating> toRun = std::move(readyCallbacks_.front());
@@ -334,69 +467,82 @@ namespace Market {
                     continue;
                 }
 
-                const optional<MarketSnapshot> snapshot = cache_.getSnapshot(toRun.front().id);
                 while (!toRun.empty()) {
                     DeferredRating rating = std::move(toRun.front());
                     toRun.pop_front();
 
-                    if (!snapshot.has_value()) {
-                        spdlog::warn("[Market] Query {} has no snapshot for a deferred rating.", rating.id);
+                    const optional<SnapshotMatch> match = findSnapshot(rating.key);
+                    if (!match.has_value()) {
+                        spdlog::warn("[Market] {} has no snapshot for a deferred rating.", rating.key.toString());
                         continue;
                     }
 
-                    const optional<PriceAssessment> assessment = scorePrice(static_cast<Price>(rating.price), snapshot.value());
+                    optional<PriceAssessment> assessment =
+                        scorePrice(static_cast<Price>(rating.price), match->snapshot);
                     if (!assessment.has_value()) {
-                        spdlog::warn("[Market] Query {} could not score a deferred rating.", rating.id);
+                        spdlog::warn("[Market] {} could not score a deferred rating.", rating.key.toString());
                         continue;
                     }
 
-                    invokeRatingCallback(rating.callback, assessment.value(), rating.id);
+                    assessment->baseFallback = match->baseFallback;
+                    invokeRatingCallback(rating.callback, assessment.value(), rating.key);
                 }
             }
         }
     }
 
-    void MarketAnalyzer::runCrawl(QueryConfiguration queryConfiguration) {
-        bool published = false;
+    void MarketAnalyzer::runCrawl(RefreshRequest request) {
+        bool succeeded = false;
+        const string scopeID = request.scope.id;
+        const SnapshotClock::time_point crawlStartedAt = SnapshotClock::now();
+        std::size_t publishedCount = 0;
+        std::size_t crawledCount = 0;
 
         try {
-            queryConfiguration.kufar.priceRange = PriceRange();
-            queryConfiguration.kufar.sortType.reset();
+            FetchResult fetchResult = crawlFunction_(request.scope.configuration);
+            crawledCount = fetchResult.ads.size();
 
-            FetchResult fetchResult = crawlFunction_(queryConfiguration.kufar);
             if (fetchResult.truncated) {
-                spdlog::warn( "[Market] Query {} crawl was truncated; keeping the previous snapshot.", queryConfiguration.id);
+                spdlog::warn("[Market] Scope {} crawl was truncated; keeping the previous snapshots.", scopeID);
             } else {
-                optional<MarketSnapshot> snapshot = buildSnapshot(fetchResult);
-                if (snapshot.has_value()) {
-                    cache_.publish(queryConfiguration.id, snapshot.value());
-                    published = true;
-                    spdlog::info(
-                        "[Market] Query {} snapshot published: {} listings, {} usable prices, {} retained prices.",
-                        queryConfiguration.id,
-                        snapshot->crawledListingCount,
-                        snapshot->statistics.usableSampleCount,
-                        snapshot->statistics.retainedSampleCount
-                    );
-                } else {
-                    spdlog::warn( "[Market] Query {} has insufficient usable prices; keeping the previous snapshot.", queryConfiguration.id);
+                MarketSnapshotMap snapshots = buildSnapshots(fetchResult, normalizers_);
+                for (auto &[key, snapshot] : snapshots) {
+                    cache_.publish(key, std::move(snapshot));
                 }
+
+                publishedCount = snapshots.size();
+                std::size_t baseCount = 0;
+                for (const auto &entry : snapshots) {
+                    if (entry.first.variant.empty()) {
+                        baseCount++;
+                    }
+                }
+                succeeded = true;
+                spdlog::info(
+                    "[Market] Scope {} crawl published {} market snapshots ({} exact, {} base) from {} listings.",
+                    scopeID,
+                    publishedCount,
+                    publishedCount - baseCount,
+                    baseCount,
+                    crawledCount
+                );
             }
         } catch (const exception &exc) {
-            spdlog::error("[Market] Query {} refresh failed: {}", queryConfiguration.id, exc.what());
+            spdlog::error("[Market] Scope {} refresh failed: {}", scopeID, exc.what());
         } catch (...) {
-            spdlog::error("[Market] Query {} refresh failed with an unknown error.", queryConfiguration.id);
+            spdlog::error("[Market] Scope {} refresh failed with an unknown error.", scopeID);
         }
 
         lock_guard<mutex> lock(refreshMutex_);
-        refreshing_.erase(queryConfiguration.id);
-        if (published) {
-            nextRefreshAttempt_.erase(queryConfiguration.id);
+        refreshingScopes_.erase(scopeID);
+        if (succeeded) {
+            nextRefreshAttempt_.erase(scopeID);
+            scopeCrawlStartedAt_[scopeID] = crawlStartedAt;
 
             deque<DeferredRating> ready;
             {
                 lock_guard<mutex> deferLock(deferMutex_);
-                const auto deferred = deferredCallbacks_.find(queryConfiguration.id);
+                const auto deferred = deferredCallbacks_.find(scopeID);
                 if (deferred != deferredCallbacks_.end()) {
                     ready.swap(deferred->second);
                     deferredCallbacks_.erase(deferred);
@@ -409,7 +555,7 @@ namespace Market {
             size_t discarded = 0;
             {
                 lock_guard<mutex> deferLock(deferMutex_);
-                const auto deferred = deferredCallbacks_.find(queryConfiguration.id);
+                const auto deferred = deferredCallbacks_.find(scopeID);
                 if (deferred != deferredCallbacks_.end()) {
                     discarded = deferred->second.size();
                     deferredCallbacks_.erase(deferred);
@@ -418,13 +564,13 @@ namespace Market {
 
             if (discarded > 0) {
                 spdlog::warn(
-                    "[Market] Query {} discarded {} deferred rating(s) after a failed refresh.",
-                    queryConfiguration.id,
+                    "[Market] Scope {} discarded {} deferred rating(s) after a failed refresh.",
+                    scopeID,
                     discarded
                 );
             }
 
-            nextRefreshAttempt_[queryConfiguration.id] = SnapshotClock::now() + refreshFailureCooldown_;
+            nextRefreshAttempt_[scopeID] = SnapshotClock::now() + refreshFailureCooldown_;
         }
     }
 }
