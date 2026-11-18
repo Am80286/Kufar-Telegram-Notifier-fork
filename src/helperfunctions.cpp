@@ -5,7 +5,6 @@
 //  Created by Macintosh on 04.06.2022.
 //
 
-#include <pstl/glue_algorithm_defs.h>
 #include <stdexcept>
 #include <vector>
 #include <fstream>
