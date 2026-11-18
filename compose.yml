@@ -1,0 +1,23 @@
+services:
+  kufar-notifier:
+    build: .
+    image: kufar-telegram-notifier:local
+    container_name: kufar-notifier
+    restart: unless-stopped
+
+    volumes:
+      - ./data:/data
+
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

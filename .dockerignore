@@ -1,0 +1,9 @@
+.git
+.gitignore
+build
+data
+tests
+*.md
+Dockerfile
+compose.yml
+.dockerignore
