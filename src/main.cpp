@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <fstream>
 #include <map>
+#include <unordered_set>
 #include <vector>
 
 #include "spdlog/spdlog.h"
@@ -52,7 +53,7 @@ struct Files {
     CacheFile cache;
 };
 
-using CacheBuckets = map<string, vector<int>>;
+using CacheBuckets = map<string, unordered_set<int>>;
 
 struct ProgramConfiguration {
     TelegramConfiguration telegramConfiguration;
@@ -165,7 +166,7 @@ CacheBuckets loadCacheBuckets(const json &data) {
     }
 
     for (const auto &[cacheKey, adIDs] : bucketsData.items()) {
-        cacheBuckets[cacheKey] = adIDs.get<vector<int>>();
+        cacheBuckets[cacheKey] = adIDs.get<unordered_set<int>>();
     }
 
     return cacheBuckets;
@@ -272,11 +273,11 @@ int main(int argc, char **argv) {
     while (true) {
         for (const auto &requestConfiguration : queryStore.getQueries()) {
             const string cacheKey = requestConfiguration.cacheKey();
-            vector<int> &viewedAds = cacheBuckets[cacheKey];
+            unordered_set<int> &viewedAds = cacheBuckets[cacheKey];
             
             try {
                 for (const auto &advert : getAds(requestConfiguration.kufar)) {
-                    if (!vectorContains(viewedAds, advert.id)) {
+                    if (!viewedAds.contains(advert.id)) {
                         spdlog::info(
                             "[New]: Adding [Title: {}], [ID: {}], [Tag: {}], [Topic: {}], [Link: {}]",
                             advert.title,
@@ -291,7 +292,7 @@ int main(int argc, char **argv) {
                             const auto adMessage = telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID, priceAssessment);
 
                             // Only ads that were actually sent are added to the cache.
-                            viewedAds.push_back(advert.id);
+                            viewedAds.insert(advert.id);
                             saveFile(programConfiguration.files.cache.path, cacheBucketsToJSON(cacheBuckets).dump());
 
                             if (!priceAssessment.has_value() && adMessage != nullptr) {
