@@ -346,8 +346,12 @@ namespace Kufar {
         return parseSearchPage(rawJson, configuration.tag);
     }
 
+    bool pagePassedTimestamp(const SearchPage &page, time_t timestamp) {
+        return !page.ads.empty() && page.ads.back().date < timestamp;
+    }
+
     vector<Ad> getAds(const KufarConfiguration &configuration) {
-        return getSearchPage(configuration, nullopt, configuration.limit).ads;
+        return getSearchPage(configuration, nullopt, DEFAULT_PAGE_SIZE).ads;
     }
 
     FetchResult getAllAds(const KufarConfiguration &configuration, const FetchOptions &options) {
@@ -396,6 +400,8 @@ namespace Kufar {
             }
             result.pagesFetched = pageNumber;
 
+            const bool passedWindow = options.newerThan.has_value() && pagePassedTimestamp(page, options.newerThan.value());
+
             for (auto &ad : page.ads) {
                 if (seenAdIDs.insert(ad.id).second) {
                     result.ads.push_back(std::move(ad));
@@ -409,6 +415,10 @@ namespace Kufar {
                 result.ads.size(),
                 result.total
             );
+
+            if (passedWindow) {
+                break;
+            }
 
             if (!page.nextCursor.has_value()) {
                 break;

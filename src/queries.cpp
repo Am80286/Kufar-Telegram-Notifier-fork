@@ -90,7 +90,6 @@ namespace queries {
             "\t\t- Минимальная: {} BYN\n"
             "\t\t- Максимальная: {} BYN\n"
             "\t- Язык: {}\n"
-            "\t- Макс. кол-во объявлений за один запрос: {}\n"
             "\t- Валюта: {}\n"
             "\t- Состояние: {}\n"
             "\t- Продавец: {}\n"
@@ -112,7 +111,6 @@ namespace queries {
             toString(this->kufar.priceRange.priceMin),
             toString(this->kufar.priceRange.priceMax),
             toString(this->kufar.language),
-            toString(this->kufar.limit),
             toString(this->kufar.currency),
             (this->kufar.condition.has_value() ? EnumString::itemCondition(this->kufar.condition.value()) : PROPERTY_UNDEFINED),
             (this->kufar.sellerType.has_value() ? EnumString::sellerType(this->kufar.sellerType.value()) : PROPERTY_UNDEFINED),
@@ -139,7 +137,6 @@ namespace queries {
         addLine(out, "Минимальная цена", toStringExplicit(this->kufar.priceRange.priceMin));
         addLine(out, "Максимальная цена", toStringExplicit(this->kufar.priceRange.priceMax));
         addLine(out, "Язык", toStringExplicit(this->kufar.language));
-        addLine(out, "Макс. кол-во объявлений за один запрос", toStringExplicit(this->kufar.limit));
         addLine(out, "Валюта", toStringExplicit(this->kufar.currency));
         addLine(out, "Состояние", mapOpt(this->kufar.condition, EnumString::itemCondition));
         addLine(out, "Продавец", mapOpt(this->kufar.sellerType, EnumString::sellerType));
@@ -175,7 +172,6 @@ namespace queries {
         }
 
         kufarConfiguration.language = getOptionalValue<string>(query, "language");
-        kufarConfiguration.limit = getOptionalValue<int>(query, "limit");
         kufarConfiguration.currency = getOptionalValue<string>(query, "currency");
         kufarConfiguration.condition = getOptionalValue<ItemCondition>(query, "condition");
         kufarConfiguration.sellerType = getOptionalValue<SellerType>(query, "seller-type");

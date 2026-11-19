@@ -8,10 +8,11 @@
 #ifndef kufar_hpp
 #define kufar_hpp
 
-#include <vector>
-#include <string>
-#include <optional>
+#include <ctime>
 #include <functional>
+#include <optional>
+#include <string>
+#include <vector>
 
 // TODO: В некоторых местах поменять оформление с enum на struct
 
@@ -563,7 +564,6 @@ namespace Kufar {
         std::optional<bool> onlyTitleSearch;            // Default: [undefined]
         PriceRange priceRange = PriceRange();           // Default: [undefined]
         std::optional<std::string> language;            // Default: [undefined]
-        std::optional<int> limit;                       // Default: [undefined]
         std::optional<std::string> currency;            // Default: [undefined]
         std::optional<ItemCondition> condition;         // Default: [undefined]
         std::optional<SellerType> sellerType;           // Default: [undefined]
@@ -587,13 +587,17 @@ namespace Kufar {
         long long total = 0;
     };
 
+    // Kufar caps the `size` query parameter at 200.
+    inline constexpr int DEFAULT_PAGE_SIZE = 200;
+
     struct FetchOptions {
-        int pageSize = 200;                // Kufar caps page size at 200.
+        int pageSize = DEFAULT_PAGE_SIZE;  // Kufar caps page size at 200.
         int delayMilliseconds = 300;       // Delay between successful pages.
         int maxPages = 5000;               // Safety limit for very large result sets.
         int retryCount = 3;                // Retries after a failed page request.
         int retryDelayMilliseconds = 1000; // Delay between retries.
         std::function<bool()> shouldStop;  // A check for whether a fetch should stop (optional)
+        std::optional<std::time_t> newerThan; // Only fetch listings newer than this (optional) 
     };
 
     struct FetchResult {
@@ -610,6 +614,11 @@ namespace Kufar {
     // Parses a raw Kufar search response into a page. Exposed for testing.
     SearchPage parseSearchPage(const std::string &rawJson, const std::optional<std::string> &tag = std::nullopt);
 
+    // True when a newest-first page's oldest listing is older than
+    // `timestamp`, meaning the polling window has been fully covered and
+    // pagination can stop.
+    bool pagePassedTimestamp(const SearchPage &, std::time_t timestamp);
+
     // Fetches a single search-results page. When cursor is set, it is sent
     // back to Kufar to continue the previous result set.
     SearchPage getSearchPage(const KufarConfiguration &, const std::optional<std::string> &cursor = std::nullopt, const std::optional<int> &pageSize = std::nullopt);
@@ -621,6 +630,7 @@ namespace Kufar {
     // baseline should clear priceRange and sortType before calling this.
     FetchResult getAllAds(const KufarConfiguration &, const FetchOptions &options = FetchOptions());
 
+    // Fetches the newest page of results using Kufar's maximum page size.
     std::vector<Ad> getAds(const KufarConfiguration &);
 
     namespace EnumString {

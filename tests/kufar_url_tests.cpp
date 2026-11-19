@@ -91,7 +91,6 @@ namespace {
             {"only-title-search", true},
             {"price", {{"min", 100}, {"max", 800}}},
             {"language", "ru"},
-            {"limit", 25},
             {"currency", "BYR"},
             {"condition", 1},
             {"seller-type", 0},
@@ -120,6 +119,13 @@ namespace {
         check(parsed.kufar.computerComponentType == Kufar::ComputerComponentType::graphicsCard, "parsed component type", __LINE__);
         check(parsed.kufar.areas == vector<int>({22, 23, 30}), "parsed areas", __LINE__);
         check(parsed.kufar.onlyWithVideos == false, "parsed false boolean", __LINE__);
+
+        // Older configuration files may still contain the removed `limit`
+        // field; unknown keys are ignored so they keep loading.
+        json legacyQuery = queryWithID;
+        legacyQuery["limit"] = 25;
+        const queries::QueryConfiguration legacyParsed = queries::parseQuery(legacyQuery);
+        check(legacyParsed.kufar.tag == "iphone", "legacy limit key is ignored", __LINE__);
     }
 
     void testAllComputerComponentTypes() {
@@ -178,6 +184,13 @@ namespace {
         check(!converted.contains("region"), "all regions omitted", __LINE__);
         check(converted.at("price") == json({{"max", 500}}), "open price range", __LINE__);
         check(converted.at("areas") == json::array({158}), "single area", __LINE__);
+
+        // The Kufar web UI's page size is not part of the query schema.
+        const json ignoredPageSize = Kufar::convertSearchParameters(
+            "https://www.kufar.by/l",
+            {{"size", "0"}}
+        );
+        check(!ignoredPageSize.contains("limit"), "page size is ignored", __LINE__);
     }
 
     void testStrictRejection() {
@@ -200,7 +213,6 @@ namespace {
             {{{"sort", "lst.a"}}, "Unsupported Kufar sort type"},
             {{{"ar", "v.or:22,,30"}}, "integer"},
             {{{"rgn", "8"}}, "unknown region"},
-            {{{"size", "0"}}, "must be positive"},
             {{{"ot", "true"}}, "either 0 or 1"}
         };
 
@@ -334,6 +346,22 @@ namespace {
             "parse"
         );
     }
+
+    void testPageTimestampBoundary() {
+        Kufar::SearchPage page;
+
+        Kufar::Ad older{};
+        older.date = 100;
+        Kufar::Ad newer{};
+        newer.date = 200;
+        page.ads = {newer, older}; // newest-first, as Kufar returns them
+
+        check(!Kufar::pagePassedTimestamp(page, 50), "window still above the page", __LINE__);
+        check(!Kufar::pagePassedTimestamp(page, 100), "equal timestamp keeps paginating", __LINE__);
+        check(Kufar::pagePassedTimestamp(page, 101), "oldest ad is below the boundary", __LINE__);
+        check(Kufar::pagePassedTimestamp(page, 150), "boundary inside the page", __LINE__);
+        check(!Kufar::pagePassedTimestamp(Kufar::SearchPage{}, 0), "empty page", __LINE__);
+    }
 }
 
 int main() {
@@ -345,7 +373,8 @@ int main() {
         {"strictly reject unsupported and invalid parameters", testStrictRejection},
         {"validate URLs before fetching", testURLValidation},
         {"build search request URLs", testSearchURLBuilding},
-        {"parse a search page", testSearchPageParsing}
+        {"parse a search page", testSearchPageParsing},
+        {"stop pagination at a timestamp boundary", testPageTimestampBoundary}
     };
 
     int failures = 0;

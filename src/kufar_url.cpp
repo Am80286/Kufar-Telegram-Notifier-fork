@@ -40,7 +40,10 @@ namespace Kufar {
         const unordered_set<string> IGNORED_PARAMETERS = {
             "cursor",
             "elementType",
-            "etext"
+            "etext",
+            // Page size is a presentation detail of the Kufar web UI. The
+            // notifier chooses its own polling page size.
+            "size"
         };
 
         string getURLPart(CURLU *url, CURLUPart part, const string &name) {
@@ -186,7 +189,7 @@ namespace Kufar {
 
         bool isSupportedParameter(const string &key) {
             static const unordered_set<string> supportedParameters = {
-                "query", "lang", "size", "cur", "cnd", "cmp", "sort",
+                "query", "lang", "cur", "cnd", "cmp", "sort",
                 "cat", "prn", "cct", "rgn", "ar", "prc"
             };
             return supportedParameters.contains(key) || BOOLEAN_PARAMETERS.contains(key);
@@ -283,12 +286,6 @@ namespace Kufar {
                 if (!parameter.empty()) {
                     query["language"] = parameter;
                 }
-            } else if (key == "size") {
-                const int limit = parseInteger(key, parameter);
-                if (limit <= 0) {
-                    throw runtime_error("Kufar parameter 'size' must be positive.");
-                }
-                query["limit"] = limit;
             } else if (key == "cur") {
                 if (!parameter.empty()) {
                     query["currency"] = parameter;

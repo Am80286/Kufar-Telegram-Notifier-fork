@@ -8,7 +8,6 @@
             "tag": "iPhone",
             "message-thread-id": 42,
             "only-title-search": true,
-            "limit": 5,
             "region": 7,
             "areas": [
                 22, 23, 30
@@ -22,7 +21,6 @@
                 "max": 800
             },
             "language": "ru",
-            "limit": 10,
             "currency": "BYR",
             "condition": 1,
             "seller-type": 0,

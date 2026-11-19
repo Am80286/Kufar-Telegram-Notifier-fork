@@ -5,11 +5,13 @@
 //  Created by Macintosh on 02.06.2022.
 //
 
+#include <algorithm>
 #include <iostream>
 #include <unistd.h>
 #include <signal.h>
 #include <fstream>
 #include <map>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "spdlog/spdlog.h"
@@ -39,6 +41,10 @@ const string DEFAULT_CONFIGURATION_FILE_NAME = "kufar-configuration.json";
 const string DEFAULT_LOG_FILE_NAME = "kufar-notifier.log";
 
 constexpr auto CACHE_SAVE_INTERVAL = 120s;
+
+constexpr int COLD_START_LISTING_LIMIT = 10;
+constexpr int POLL_MAX_PAGES = 10;
+constexpr time_t POLL_FRONTIER_OVERLAP_SECONDS = 600;
 
 const int CACHE_VERSION = 2;
 
@@ -304,54 +310,149 @@ int main(int argc, char **argv) {
         }
     };
     
+    struct QueryPollState {
+        time_t frontier = 0;
+        time_t suppressBefore = 0;
+        bool overlapEnabled = false;
+    };
+
+    unordered_map<QueryID, QueryPollState> pollStates;
+
     while (!gStop) {
         for (const auto &requestConfiguration : queryStore.getQueries()) {
+            if (gStop)
+                break;
+
+            const QueryID queryID = requestConfiguration.id;
             const string cacheKey = requestConfiguration.cacheKey();
             unordered_set<int> &viewedAds = cacheBuckets[cacheKey];
-            
+
+            const bool chronological = !requestConfiguration.kufar.sortType.has_value();
+            const auto stateIt = pollStates.find(queryID);
+            const bool coldStart = stateIt == pollStates.end();
+            const bool useCatchUp = chronological && !coldStart;
+
+            time_t windowStart = 0;
+            if (useCatchUp) {
+                const time_t overlap = stateIt->second.overlapEnabled ? POLL_FRONTIER_OVERLAP_SECONDS : 0;
+                windowStart = max(stateIt->second.frontier - overlap, stateIt->second.suppressBefore);
+            }
+
+            vector<Ad> fetched;
+            size_t processCount = 0;
+            bool fetchSucceeded = true;
+
             try {
-                for (const auto &advert : getAds(requestConfiguration.kufar)) {
-                    if (gStop)
-                        break;
+                if (!useCatchUp) {
+                    fetched = getSearchPage(
+                        requestConfiguration.kufar,
+                        nullopt,
+                        COLD_START_LISTING_LIMIT
+                    ).ads;
+                    processCount = fetched.size();
 
-                    if (!viewedAds.contains(advert.id)) {
-                        spdlog::info(
-                            "[New]: Adding [Title: {}], [ID: {}], [Tag: {}], [Topic: {}], [Link: {}]",
-                            advert.title,
-                            advert.id,
-                            advert.tag.value_or(PROPERTY_UNDEFINED),
-                            cacheKey,
-                            advert.link
+                    if (coldStart && chronological) {
+                        spdlog::debug(
+                            "[Poll] Query {} cold start: considering the newest {} listing(s).",
+                            queryID,
+                            processCount
                         );
-
-                        try {
-                            const auto priceAssessment = marketAnalyzer.rate(advert);
-                            const auto adMessage = telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID, priceAssessment);
-
-                            // Only ads that were actually sent are added to the cache.
-                            viewedAds.insert(advert.id);
-                            cacheDirty = true;
-
-                            if (!priceAssessment.has_value() && adMessage != nullptr) {
-                                marketAnalyzer.rateDeferred(
-                                    advert,
-                                    [&telegramClient, adMessage, advert](Market::PriceAssessment newAssessment) {
-                                        telegramClient.editAdvertAssessment(adMessage, advert, newAssessment);
-                                    }
-                                );
-                            }
-                        } catch (const exception &exc) {
-                            spdlog::error("(sendAdvert) [Topic: {}]: {}", cacheKey, exc.what());
-                        }
-                        
-                    } else {
-                        //spdlog::debug("[Already was!]");
                     }
-                    usleep(300000); // 0.3s
+                } else {
+                    FetchOptions options;
+                    options.pageSize = DEFAULT_PAGE_SIZE;
+                    options.maxPages = POLL_MAX_PAGES;
+                    options.newerThan = windowStart;
+                    options.shouldStop = [] { return gStop != 0; };
+
+                    FetchResult result = getAllAds(requestConfiguration.kufar, options);
+                    fetched = std::move(result.ads);
+                    processCount = fetched.size();
+
+                    if (result.truncated && !gStop) {
+                        spdlog::warn(
+                            "[Poll] Query {} reached the page limit ({} pages); "
+                            "older listings in this window were skipped.",
+                            queryID,
+                            POLL_MAX_PAGES
+                        );
+                    }
                 }
             } catch (const exception &exc) {
-                spdlog::error("(getAds): {}", exc.what());
+                spdlog::error("(poll) [Query: {}]: {}", queryID, exc.what());
+                fetchSucceeded = false;
+                fetched.clear();
+                processCount = 0;
             }
+
+            bool interrupted = gStop != 0;
+            bool allSent = true;
+
+            for (size_t index = 0; index < processCount; index++) {
+                if (gStop) {
+                    interrupted = true;
+                    break;
+                }
+
+                const Ad &advert = fetched[index];
+
+                // Listings below the polling window are history that the pagination happened to include on its last page
+                if (useCatchUp && advert.date < windowStart)
+                    continue;
+
+                if (viewedAds.contains(advert.id))
+                    continue;
+
+                spdlog::info(
+                    "[New]: Adding [Title: {}], [ID: {}], [Tag: {}], [Topic: {}], [Link: {}]",
+                    advert.title,
+                    advert.id,
+                    advert.tag.value_or(PROPERTY_UNDEFINED),
+                    cacheKey,
+                    advert.link
+                );
+
+                try {
+                    const auto priceAssessment = marketAnalyzer.rate(advert);
+                    const auto adMessage = telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID, priceAssessment);
+
+                    viewedAds.insert(advert.id);
+                    cacheDirty = true;
+
+                    if (!priceAssessment.has_value() && adMessage != nullptr) {
+                        marketAnalyzer.rateDeferred(
+                            advert,
+                            [&telegramClient, adMessage, advert](Market::PriceAssessment newAssessment) {
+                                telegramClient.editAdvertAssessment(adMessage, advert, newAssessment);
+                            }
+                        );
+                    }
+                } catch (const exception &exc) {
+                    allSent = false;
+                    spdlog::error("(sendAdvert) [Query: {}] [Topic: {}]: {}", queryID, cacheKey, exc.what());
+                }
+
+                usleep(300000); // 0.3s
+            }
+
+            if (fetchSucceeded && chronological && !interrupted && allSent) {
+                time_t newest = coldStart ? 0 : stateIt->second.frontier;
+                for (const Ad &advert : fetched) {
+                    newest = max(newest, advert.date);
+                }
+
+                if (newest > 0) {
+                    QueryPollState &state = pollStates[queryID];
+                    state.frontier = newest;
+
+                    if (coldStart) {
+                        state.suppressBefore = newest;
+                    } else {
+                        state.overlapEnabled = true;
+                    }
+                }
+            }
+
             DEBUG_MSG("(QueryDelay) Sleeping for: {}s.", programConfiguration.queryDelaySeconds);
             interruptibleSleep(programConfiguration.queryDelaySeconds);
         }
