@@ -365,6 +365,10 @@ namespace Kufar {
         optional<string> cursor;
 
         for (int pageNumber = 1; pageNumber <= options.maxPages; pageNumber++) {
+            if (options.shouldStop && options.shouldStop()) {
+                result.truncated = true;
+                break;
+            }
             SearchPage page;
 
             for (int attempt = 0; ; attempt++) {

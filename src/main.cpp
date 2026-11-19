@@ -11,7 +11,6 @@
 #include <fstream>
 #include <map>
 #include <unordered_set>
-#include <vector>
 
 #include "spdlog/spdlog.h"
 #include "spdlog/cfg/env.h"
@@ -32,11 +31,21 @@ using namespace Telegram;
 using namespace queries;
 using nlohmann::json;
 
+using Clock = std::chrono::steady_clock;
+using namespace std::chrono_literals;
+
 const string DEFAULT_CACHE_FILE_NAME = "cached-data.json";
 const string DEFAULT_CONFIGURATION_FILE_NAME = "kufar-configuration.json";
 const string DEFAULT_LOG_FILE_NAME = "kufar-notifier.log";
 
+constexpr auto CACHE_SAVE_INTERVAL = 120s;
+
 const int CACHE_VERSION = 2;
+
+static volatile sig_atomic_t gStop = 0;
+static void onSignal(int) { 
+    gStop = 1; 
+}
 
 struct ConfigurationFile {
     string path;
@@ -209,6 +218,9 @@ int main(int argc, char **argv) {
         return exitCode;
     }
 
+    signal(SIGINT, onSignal);
+    signal(SIGTERM, onSignal);
+
     arguments::Options options = parsedOptions.value();
 
     // By default, files are looked up in the current working directory.
@@ -270,13 +282,38 @@ int main(int argc, char **argv) {
     Market::MarketAnalyzer marketAnalyzer;
     telegramClient.startPolling();
 
-    while (true) {
+    Clock::time_point lastCacheSave = Clock::now();
+
+    bool cacheDirty = false;
+
+    auto saveCache = [&](bool force = false) {
+        if (!cacheDirty) 
+            return;
+        if (!force && Clock::now() - lastCacheSave < CACHE_SAVE_INTERVAL) 
+            return;
+
+        saveFile(programConfiguration.files.cache.path, cacheBucketsToJSON(cacheBuckets).dump());
+        lastCacheSave = Clock::now();
+        cacheDirty = false;
+    };
+
+    auto interruptibleSleep = [&](int seconds) {
+        for (int i = 0; i < seconds && !gStop; ++i) {
+            sleep(1);
+            saveCache();
+        }
+    };
+    
+    while (!gStop) {
         for (const auto &requestConfiguration : queryStore.getQueries()) {
             const string cacheKey = requestConfiguration.cacheKey();
             unordered_set<int> &viewedAds = cacheBuckets[cacheKey];
             
             try {
                 for (const auto &advert : getAds(requestConfiguration.kufar)) {
+                    if (gStop)
+                        break;
+
                     if (!viewedAds.contains(advert.id)) {
                         spdlog::info(
                             "[New]: Adding [Title: {}], [ID: {}], [Tag: {}], [Topic: {}], [Link: {}]",
@@ -293,7 +330,7 @@ int main(int argc, char **argv) {
 
                             // Only ads that were actually sent are added to the cache.
                             viewedAds.insert(advert.id);
-                            saveFile(programConfiguration.files.cache.path, cacheBucketsToJSON(cacheBuckets).dump());
+                            cacheDirty = true;
 
                             if (!priceAssessment.has_value() && adMessage != nullptr) {
                                 marketAnalyzer.rateDeferred(
@@ -316,10 +353,13 @@ int main(int argc, char **argv) {
                 spdlog::error("(getAds): {}", exc.what());
             }
             DEBUG_MSG("(QueryDelay) Sleeping for: {}s.", programConfiguration.queryDelaySeconds);
-            sleep(programConfiguration.queryDelaySeconds);
+            interruptibleSleep(programConfiguration.queryDelaySeconds);
         }
+
         DEBUG_MSG("(LoopDelay) Sleeping for: {}s.", programConfiguration.loopDelaySeconds);
-        sleep(programConfiguration.loopDelaySeconds);
+        interruptibleSleep(programConfiguration.loopDelaySeconds);
     }
+
+    saveCache(true);
     return 0;
 }

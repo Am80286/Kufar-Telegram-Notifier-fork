@@ -17,6 +17,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <stop_token>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -129,7 +130,7 @@ namespace Market {
 
     class MarketAnalyzer {
         public:
-            using CrawlFunction = std::function<Kufar::FetchResult(const Kufar::KufarConfiguration &)>;
+            using CrawlFunction = std::function<Kufar::FetchResult(const Kufar::KufarConfiguration &, std::stop_token stopToken)>;
 
             explicit MarketAnalyzer(
                 SnapshotClock::duration snapshotTTL = DEFAULT_SNAPSHOT_TTL,
@@ -189,7 +190,7 @@ namespace Market {
                 std::optional<std::time_t> missingAdDate = std::nullopt
             );
             void workerLoop(std::stop_token stopToken);
-            void runCrawl(RefreshRequest request);
+            void runCrawl(RefreshRequest request, std::stop_token stopToken);
     };
 }
 

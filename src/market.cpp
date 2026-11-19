@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <stop_token>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -272,9 +273,10 @@ namespace Market {
             throw invalid_argument("Market refresh failure cooldown must not be negative.");
         }
         if (!crawlFunction_) {
-            crawlFunction_ = [](const KufarConfiguration &configuration) {
+            crawlFunction_ = [](const KufarConfiguration &configuration, stop_token stopToken) {
                 FetchOptions options;
                 options.delayMilliseconds = DEFAULT_MARKET_CRAWL_DELAY_MILLISECONDS;
+                options.shouldStop = [stopToken] { return stopToken.stop_requested(); };
                 return getAllAds(configuration, options);
             };
         }
@@ -458,7 +460,7 @@ namespace Market {
             refreshQueue_.pop_front();
             lock.unlock();
 
-            runCrawl(std::move(request));
+            runCrawl(std::move(request), stopToken);
 
             while (!readyCallbacks_.empty()) {
                 deque<DeferredRating> toRun = std::move(readyCallbacks_.front());
@@ -491,7 +493,7 @@ namespace Market {
         }
     }
 
-    void MarketAnalyzer::runCrawl(RefreshRequest request) {
+    void MarketAnalyzer::runCrawl(RefreshRequest request, stop_token stopToken) {
         bool succeeded = false;
         const string scopeID = request.scope.id;
         const SnapshotClock::time_point crawlStartedAt = SnapshotClock::now();
@@ -499,7 +501,7 @@ namespace Market {
         std::size_t crawledCount = 0;
 
         try {
-            FetchResult fetchResult = crawlFunction_(request.scope.configuration);
+            FetchResult fetchResult = crawlFunction_(request.scope.configuration, stopToken);
             crawledCount = fetchResult.ads.size();
 
             if (fetchResult.truncated) {

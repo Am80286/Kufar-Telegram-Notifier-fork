@@ -11,6 +11,7 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include <functional>
 
 // TODO: В некоторых местах поменять оформление с enum на struct
 
@@ -592,6 +593,7 @@ namespace Kufar {
         int maxPages = 5000;               // Safety limit for very large result sets.
         int retryCount = 3;                // Retries after a failed page request.
         int retryDelayMilliseconds = 1000; // Delay between retries.
+        std::function<bool()> shouldStop;  // A check for whether a fetch should stop (optional)
     };
 
     struct FetchResult {

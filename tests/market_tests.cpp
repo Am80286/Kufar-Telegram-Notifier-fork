@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <utility>
@@ -250,7 +251,7 @@ namespace {
         Market::MarketAnalyzer analyzer(
             chrono::hours(1),
             chrono::minutes(5),
-            [&](const Kufar::KufarConfiguration &) {
+            [&](const Kufar::KufarConfiguration &, std::stop_token) {
                 return fetchResult;
             }
         );
@@ -281,7 +282,7 @@ namespace {
         Market::MarketAnalyzer analyzer(
             chrono::hours(1),
             chrono::minutes(5),
-            [&](const Kufar::KufarConfiguration &configuration) {
+            [&](const Kufar::KufarConfiguration &configuration, std::stop_token) {
                 ++crawlCalls;
                 {
                     unique_lock<mutex> lock(crawlMutex);
@@ -364,7 +365,7 @@ namespace {
         Market::MarketAnalyzer analyzer(
             chrono::seconds(0),
             chrono::minutes(5),
-            [&](const Kufar::KufarConfiguration &) {
+            [&](const Kufar::KufarConfiguration &, std::stop_token) {
                 const int call = ++crawlCalls;
                 if (call == 2) {
                     unique_lock<mutex> lock(crawlMutex);
@@ -411,7 +412,7 @@ namespace {
         Market::MarketAnalyzer analyzer(
             chrono::hours(1),
             chrono::minutes(5),
-            [&](const Kufar::KufarConfiguration &) {
+            [&](const Kufar::KufarConfiguration &, std::stop_token) {
                 ++crawlCalls;
                 return makeFetchResult();
             }
@@ -459,7 +460,7 @@ namespace {
         Market::MarketAnalyzer analyzer(
             chrono::milliseconds(100),
             chrono::minutes(5),
-            [&](const Kufar::KufarConfiguration &) {
+            [&](const Kufar::KufarConfiguration &, std::stop_token) {
                 ++crawlCalls;
                 return makeFetchResult();
             }
@@ -511,7 +512,7 @@ namespace {
         Market::MarketAnalyzer analyzer(
             chrono::hours(1),
             chrono::minutes(5),
-            [&](const Kufar::KufarConfiguration &) {
+            [&](const Kufar::KufarConfiguration &, std::stop_token) {
                 ++crawlCalls;
                 unique_lock<mutex> lock(crawlMutex);
                 crawlCondition.wait(lock, [&] { return releaseCrawl; });
@@ -570,7 +571,7 @@ namespace {
         Market::MarketAnalyzer analyzer(
             chrono::hours(1),
             chrono::seconds(0),
-            [&](const Kufar::KufarConfiguration &) {
+            [&](const Kufar::KufarConfiguration &, std::stop_token) {
                 const int call = ++crawlCalls;
                 if (call == 1) {
                     unique_lock<mutex> lock(crawlMutex);
@@ -632,7 +633,7 @@ namespace {
         Market::MarketAnalyzer analyzer(
             chrono::hours(1),
             chrono::minutes(5),
-            [&](const Kufar::KufarConfiguration &configuration) {
+            [&](const Kufar::KufarConfiguration &configuration, std::stop_token) {
                 ++crawlCalls;
                 observedConfiguration = configuration;
                 return fetchResult;
