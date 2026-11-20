@@ -500,13 +500,24 @@ namespace Market {
         std::size_t publishedCount = 0;
         std::size_t crawledCount = 0;
 
+        spdlog::info("[Market] Scope {} crawl started.", scopeID);
+
         try {
             FetchResult fetchResult = crawlFunction_(request.scope.configuration, stopToken);
             crawledCount = fetchResult.ads.size();
 
-            if (fetchResult.truncated) {
-                spdlog::warn("[Market] Scope {} crawl was truncated; keeping the previous snapshots.", scopeID);
+            if (stopToken.stop_requested()) {
+                spdlog::warn("[Market] Scope {} crawl was cancelled during shutdown.", scopeID);
             } else {
+                if (fetchResult.truncated) {
+                    spdlog::warn(
+                        "[Market] Scope {} crawl reached the page limit at {} listings; "
+                        "publishing a partial baseline.",
+                        scopeID,
+                        crawledCount
+                    );
+                }
+
                 MarketSnapshotMap snapshots = buildSnapshots(fetchResult, normalizers_);
                 for (auto &[key, snapshot] : snapshots) {
                     cache_.publish(key, std::move(snapshot));
@@ -521,12 +532,13 @@ namespace Market {
                 }
                 succeeded = true;
                 spdlog::info(
-                    "[Market] Scope {} crawl published {} market snapshots ({} exact, {} base) from {} listings.",
+                    "[Market] Scope {} crawl published {} market snapshots ({} exact, {} base) from {} listings{}.",
                     scopeID,
                     publishedCount,
                     publishedCount - baseCount,
                     baseCount,
-                    crawledCount
+                    crawledCount,
+                    fetchResult.truncated ? " (partial)" : ""
                 );
             }
         } catch (const exception &exc) {

@@ -669,6 +669,34 @@ namespace {
             __LINE__
         );
     }
+    void testTruncatedCrawlPublishesPartialBaseline() {
+        Kufar::FetchResult fetchResult = makeFetchResult();
+        fetchResult.truncated = true;
+
+        atomic<int> crawlCalls = 0;
+        Market::MarketAnalyzer analyzer(
+            chrono::hours(1),
+            chrono::minutes(5),
+            [&](const Kufar::KufarConfiguration &, std::stop_token) {
+                ++crawlCalls;
+                return fetchResult;
+            }
+        );
+
+        Kufar::Ad ad = makeGpuAd(10000);
+        optional<Market::PriceAssessment> assessment;
+        const auto deadline = chrono::steady_clock::now() + chrono::seconds(2);
+        while (!assessment.has_value() && chrono::steady_clock::now() < deadline) {
+            assessment = analyzer.rate(ad);
+            if (!assessment.has_value()) {
+                this_thread::sleep_for(chrono::milliseconds(5));
+            }
+        }
+
+        check(assessment.has_value(), "partial baseline is published", __LINE__);
+        check(close(assessment->baselineMedian, 10000), "partial baseline median", __LINE__);
+        check(crawlCalls.load() == 1, "partial crawl invoked once", __LINE__);
+    }
 }
 
 int main() {
@@ -685,7 +713,8 @@ int main() {
         {"deferred rating immediate callback", testDeferredRatingImmediateAndStaleSnapshot},
         {"deferred callback failure isolation", testDeferredCallbackFailureIsolation},
         {"failed refresh discards deferred ratings", testFailedRefreshDiscardsDeferredRatings},
-        {"scope crawl publishes all markets", testAnalyzerPublishesAllKeysFromScopeCrawl}
+        {"scope crawl publishes all markets", testAnalyzerPublishesAllKeysFromScopeCrawl},
+        {"truncated crawl publishes partial baseline", testTruncatedCrawlPublishesPartialBaseline}
     };
 
     int failures = 0;
