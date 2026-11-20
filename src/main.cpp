@@ -355,6 +355,13 @@ int main(int argc, char **argv) {
 
     Telegram::Client telegramClient(programConfiguration.telegramConfiguration, queryStore);
 
+    try {
+        telegramClient.validate();
+    } catch (const exception &exc) {
+        spdlog::error("[Telegram] Проверка конфигурации не пройдена: {}", exc.what());
+        return 1;
+    }
+
     Market::MarketAnalyzer marketAnalyzer;
 
     delivery::SendFunction send = delivery::makeTelegramSender(telegramClient, marketAnalyzer);

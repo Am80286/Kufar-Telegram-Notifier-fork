@@ -59,6 +59,10 @@ namespace Telegram {
             const Market::PriceAssessment &assessment
         ) const;
 
+        // Verifies the bot token and that the configured chat is reachable.
+        // Throws an exception when the deployment is misconfigured.
+        void validate() const;
+
         void startPolling();
 
         void stopPolling();

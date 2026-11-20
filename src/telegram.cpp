@@ -177,6 +177,23 @@ namespace Telegram {
         return nullptr;
     }
 
+    void Client::validate() const {
+        const TgBot::Api &api = bot_->getApi();
+
+        const TgBot::User::Ptr me = api.getMe();
+        spdlog::info("[Telegram] Бот: @{}", me->username.value_or("?"));
+
+        const TgBot::ChatFullInfo::Ptr chat = api.getChat(configuration_.chatID);
+        if (chat == nullptr) {
+            throw runtime_error("Telegram не вернул данные чата.");
+        }
+
+        spdlog::info(
+            "[Telegram] Чат доступен: {}",
+            chat->title.value_or(std::to_string(configuration_.chatID))
+        );
+    }
+
     void Client::startPolling() {
         if (pollingThread_.joinable()) {
             return;
