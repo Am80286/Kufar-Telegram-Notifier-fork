@@ -6,51 +6,40 @@
 //
 
 #include <algorithm>
-#include <iostream>
-#include <unistd.h>
+#include <chrono>
+#include <optional>
 #include <signal.h>
-#include <fstream>
-#include <map>
-#include <unordered_map>
-#include <unordered_set>
+#include <string>
+#include <utility>
 
-#include "spdlog/spdlog.h"
-#include "spdlog/cfg/env.h"
+#include <spdlog/spdlog.h>
+#include <spdlog/cfg/env.h>
 
 #include <nlohmann/json.hpp>
-#include "kufar.hpp"
-#include "telegram.hpp"
-#include "networking.hpp"
-#include "helperfunctions.hpp"
-#include "logging.hpp"
+
 #include "arguments.hpp"
-#include "queries.hpp"
+#include "cache.hpp"
+#include "delivery.hpp"
+#include "helperfunctions.hpp"
+#include "kufar.hpp"
+#include "logging.hpp"
 #include "market.hpp"
+#include "queries.hpp"
+#include "scheduler.hpp"
+#include "telegram.hpp"
+#include "telegram_sender.hpp"
 
 using namespace std;
-using namespace Kufar;
-using namespace Telegram;
-using namespace queries;
-using nlohmann::json;
-
-using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
+using nlohmann::json;
 
 const string DEFAULT_CACHE_FILE_NAME = "cached-data.json";
 const string DEFAULT_CONFIGURATION_FILE_NAME = "kufar-configuration.json";
 const string DEFAULT_LOG_FILE_NAME = "kufar-notifier.log";
 
-constexpr auto CACHE_SAVE_INTERVAL = 120s;
-
-constexpr int COLD_START_LISTING_LIMIT = 10;
-constexpr int POLL_MAX_PAGES = 10;
-constexpr time_t POLL_FRONTIER_OVERLAP_SECONDS = 600;
-
-const int CACHE_VERSION = 2;
-
 static volatile sig_atomic_t gStop = 0;
-static void onSignal(int) { 
-    gStop = 1; 
+static void onSignal(int) {
+    gStop = 1;
 }
 
 struct ConfigurationFile {
@@ -68,29 +57,109 @@ struct Files {
     CacheFile cache;
 };
 
-using CacheBuckets = map<string, unordered_set<int>>;
-
 struct ProgramConfiguration {
-    TelegramConfiguration telegramConfiguration;
+    Telegram::TelegramConfiguration telegramConfiguration;
     Files files;
-    
+
+    scheduling::SchedulerConfiguration scheduler;
+    // Retained only for backwards-compatible configuration parsing
     int queryDelaySeconds = 5;
     int loopDelaySeconds = 30;
 };
 
+scheduling::SchedulerConfiguration parseSchedulerConfiguration(const json &data, int loopDelaySeconds) {
+    scheduling::SchedulerConfiguration configuration;
+
+    if (data.contains("scheduler")) {
+        const json &schedulerData = data.at("scheduler");
+        if (!schedulerData.is_object()) {
+            throw runtime_error("Поле \"scheduler\" должно быть объектом.");
+        }
+
+        const auto readPositiveSeconds = [&schedulerData](const char *key, int fallback) {
+            if (!schedulerData.contains(key)) {
+                return fallback;
+            }
+
+            const int value = schedulerData.at(key).get<int>();
+            if (value <= 0) {
+                throw runtime_error(
+                    string("Поле \"scheduler.") + key + "\" должно быть положительным числом."
+                );
+            }
+            return value;
+        };
+
+        const int defaultInterval = readPositiveSeconds(
+            "default-interval-seconds",
+            static_cast<int>(configuration.defaultInterval.count())
+        );
+        const int minInterval = readPositiveSeconds(
+            "min-interval-seconds",
+            defaultInterval
+        );
+        const int maxInterval = readPositiveSeconds(
+            "max-interval-seconds",
+            max(300, minInterval)
+        );
+
+        configuration.defaultInterval = chrono::seconds(defaultInterval);
+        configuration.minInterval = chrono::seconds(minInterval);
+        configuration.maxInterval = chrono::seconds(maxInterval);
+        configuration.jitterPercent = schedulerData.value(
+            "jitter-percent",
+            configuration.jitterPercent
+        );
+
+        if (configuration.maxInterval < configuration.minInterval) {
+            throw runtime_error(
+                "Поле \"scheduler.max-interval-seconds\" не может быть меньше "
+                "\"scheduler.min-interval-seconds\"."
+            );
+        }
+        if (configuration.jitterPercent < 0 || configuration.jitterPercent > 100) {
+            throw runtime_error("Поле \"scheduler.jitter-percent\" должно быть от 0 до 100.");
+        }
+    } else if (loopDelaySeconds > 0) {
+        // Backwards compatibility: older configs effectively polled each query once per outer loop
+        configuration.defaultInterval = chrono::seconds(loopDelaySeconds);
+        configuration.minInterval = chrono::seconds(loopDelaySeconds);
+        configuration.maxInterval = chrono::seconds(max(loopDelaySeconds, 300));
+    }
+
+    return configuration;
+}
+
 void loadJSONConfigurationData(const json &data, ProgramConfiguration &programConfiguration) {
     {
-        json telegramData = data.at("telegram");
+        const json telegramData = data.at("telegram");
         programConfiguration.telegramConfiguration.botToken = telegramData.at("bot-token");
         programConfiguration.telegramConfiguration.chatID = telegramData.at("chat-id");
     }
-    {
-        if (data.contains("delays")) {
-            json delaysData = data.at("delays");
-            programConfiguration.queryDelaySeconds = delaysData.at("query");
-            programConfiguration.loopDelaySeconds = delaysData.at("loop");
-        }
+
+    if (data.contains("delays")) {
+        const json &delaysData = data.at("delays");
+        programConfiguration.queryDelaySeconds = delaysData.value(
+            "query",
+            programConfiguration.queryDelaySeconds
+        );
+        programConfiguration.loopDelaySeconds = delaysData.value(
+            "loop",
+            programConfiguration.loopDelaySeconds
+        );
     }
+
+    if (data.contains("delays") && data.at("delays").contains("query")) {
+        spdlog::warn(
+            "[Конфигурация] Поле \"delays.query\" устарело и игнорируется. "
+            "Используйте \"scheduler\" и \"poll-interval-seconds\"."
+        );
+    }
+
+    programConfiguration.scheduler = parseSchedulerConfiguration(
+        data,
+        programConfiguration.loopDelaySeconds
+    );
 }
 
 void printJSONConfigurationData(const ProgramConfiguration &programConfiguration) {
@@ -101,105 +170,41 @@ void printJSONConfigurationData(const ProgramConfiguration &programConfiguration
         maskToken(programConfiguration.telegramConfiguration.botToken),
         programConfiguration.telegramConfiguration.chatID
     );
-    
+
     spdlog::info(
-        "\n- Задержки:\n"
-        "\t- Перед новым запросом: {}с. \n"
-        "\t- После прохода всего списка запросов: {}c.",
-        programConfiguration.queryDelaySeconds,
-        programConfiguration.loopDelaySeconds
+        "\n- Планировщик:\n"
+        "\t- Интервал по умолчанию: {}с.\n"
+        "\t- Минимальный интервал: {}с.\n"
+        "\t- Максимальный интервал: {}с.\n"
+        "\t- Джиттер: {}%.",
+        programConfiguration.scheduler.defaultInterval.count(),
+        programConfiguration.scheduler.minInterval.count(),
+        programConfiguration.scheduler.maxInterval.count(),
+        programConfiguration.scheduler.jitterPercent
     );
 }
 
 json getJSONDataFromPath(const string &JSONFilePath) {
     spdlog::info("[Загрузка файла]: \"{}\"", JSONFilePath);
 
-    if (!fileExists(JSONFilePath)){
+    if (!fileExists(JSONFilePath)) {
         throw runtime_error("Файл не существует по данному пути или к нему нет доступа: \"" + JSONFilePath + "\"");
     }
-    
+
     if (getFileSize(JSONFilePath) > 4000000) {
         throw runtime_error("Размер файла превышает 4МБ: \"" + JSONFilePath + "\"");
     }
-        
+
     try {
-       json textFromFile = json::parse(getTextFromFile(JSONFilePath));
-       return textFromFile;
+        return json::parse(getTextFromFile(JSONFilePath));
     } catch (const exception &exc) {
-       throw runtime_error("Невозможно получить данные из файла \"" + JSONFilePath + "\": " + exc.what());
+        throw runtime_error("Невозможно получить данные из файла \"" + JSONFilePath + "\": " + exc.what());
     }
-
-}
-
-/**
-  Cache representation in JSON:
-  {
-      "version": 2,
-      "buckets": {
-          "default": [1, 2, 3],
-          "42": [1, 2]
-      }
-  }
- */
-json cacheBucketsToJSON(const CacheBuckets &cacheBuckets) {
-    json bucketsData = json::object();
-    for (const auto &[cacheKey, adIDs] : cacheBuckets) {
-        bucketsData[cacheKey] = adIDs;
-    }
-
-    return json{
-        {"version", CACHE_VERSION},
-        {"buckets", bucketsData}
-    };
-}
-
-CacheBuckets loadCacheBuckets(const json &data) {
-    CacheBuckets cacheBuckets;
-
-    if (data.is_array()) {
-        if (!data.empty()) {
-            spdlog::warn(
-                "[Кеш] Обнаружен устаревший формат кеша (плоский массив). "
-                "Идентификаторы проигнорированы, кеш будет создан заново."
-            );
-        }
-        return cacheBuckets;
-    }
-
-    if (!data.is_object() || !data.contains("buckets")) {
-        throw runtime_error("Некорректный формат файла кеша: ожидается объект с полем \"buckets\".");
-    }
-
-    const int version = data.value("version", CACHE_VERSION);
-    if (version > CACHE_VERSION) {
-        throw runtime_error("Файл кеша создан более новой версией программы (version " + to_string(version) + ").");
-    }
-
-    const json &bucketsData = data.at("buckets");
-    if (!bucketsData.is_object()) {
-        throw runtime_error("Некорректный формат файла кеша: поле \"buckets\" должно быть объектом.");
-    }
-
-    for (const auto &[cacheKey, adIDs] : bucketsData.items()) {
-        cacheBuckets[cacheKey] = adIDs.get<unordered_set<int>>();
-    }
-
-    return cacheBuckets;
 }
 
 void createEmptyCacheFile(const string &path) {
     spdlog::info("[Кеш] Файл не найден, создаю новый: \"{}\"", path);
-
-    ofstream cacheFile(path, ofstream::trunc);
-    if (!cacheFile) {
-        throw runtime_error("Не удалось создать файл кеша: \"" + path + "\"");
-    }
-    cacheFile << cacheBucketsToJSON(CacheBuckets()).dump();
-    cacheFile.close();
-
-    if (!cacheFile) {
-        throw runtime_error("Не удалось записать файл кеша: \"" + path + "\"");
-    }
+    saveFile(path, cache::CacheStore::emptyDocument().dump(4));
 }
 
 Files loadFiles(const arguments::Options &options) {
@@ -229,7 +234,6 @@ int main(int argc, char **argv) {
 
     arguments::Options options = parsedOptions.value();
 
-    // By default, files are looked up in the current working directory.
     if (options.configPath.empty()) {
         options.configPath = DEFAULT_CONFIGURATION_FILE_NAME;
     }
@@ -261,206 +265,65 @@ int main(int argc, char **argv) {
     }
 
     ProgramConfiguration programConfiguration;
-    CacheBuckets cacheBuckets;
-    optional<QueryStore> queryStoreStorage;
+    optional<cache::CacheStore> cacheStorage;
+    optional<queries::QueryStore> queryStoreStorage;
 
     try {
         programConfiguration.files = loadFiles(options);
         loadJSONConfigurationData(programConfiguration.files.configuration.contents, programConfiguration);
         printJSONConfigurationData(programConfiguration);
-        cacheBuckets = loadCacheBuckets(programConfiguration.files.cache.contents);
-        queryStoreStorage.emplace(programConfiguration.files.configuration.path, programConfiguration.files.configuration.contents);
+
+        cacheStorage.emplace(options.cachePath, programConfiguration.files.cache.contents);
+        queryStoreStorage.emplace(
+            programConfiguration.files.configuration.path,
+            programConfiguration.files.configuration.contents
+        );
     } catch (const exception &exc) {
         spdlog::error("{}", exc.what());
         return 1;
     }
 
-    QueryStore &queryStore = *queryStoreStorage;
-    
-    for (const QueryConfiguration &query : queryStore.getQueries()) {
+    cache::CacheStore &cacheStore = *cacheStorage;
+    queries::QueryStore &queryStore = *queryStoreStorage;
+
+    for (const queries::QueryConfiguration &query : queryStore.getQueries()) {
         spdlog::info(
-            "\n- Добавлен запрос:\n {}", 
+            "\n- Добавлен запрос:\n {}",
             query.getDescription()
         );
     }
 
     Telegram::Client telegramClient(programConfiguration.telegramConfiguration, queryStore);
     Market::MarketAnalyzer marketAnalyzer;
+
+    delivery::SendFunction send = delivery::makeTelegramSender(telegramClient, marketAnalyzer);
+    delivery::DeliveryWorker deliveryWorker(
+        send,
+        cacheStore,
+        [&queryStore](queries::QueryID id) { return queryStore.contains(id); }
+    );
+
     telegramClient.startPolling();
 
-    Clock::time_point lastCacheSave = Clock::now();
+    scheduling::PollingScheduler scheduler(
+        queryStore,
+        cacheStore,
+        deliveryWorker,
+        programConfiguration.scheduler,
+        scheduling::NewestFetcher(),
+        scheduling::WindowFetcher(),
+        scheduling::NowFunction(),
+        [] { return gStop != 0; }
+    );
 
-    bool cacheDirty = false;
-
-    auto saveCache = [&](bool force = false) {
-        if (!cacheDirty) 
-            return;
-        if (!force && Clock::now() - lastCacheSave < CACHE_SAVE_INTERVAL) 
-            return;
-
-        saveFile(programConfiguration.files.cache.path, cacheBucketsToJSON(cacheBuckets).dump());
-        lastCacheSave = Clock::now();
-        cacheDirty = false;
-    };
-
-    auto interruptibleSleep = [&](int seconds) {
-        for (int i = 0; i < seconds && !gStop; ++i) {
-            sleep(1);
-            saveCache();
-        }
-    };
-    
-    struct QueryPollState {
-        time_t frontier = 0;
-        time_t suppressBefore = 0;
-        bool overlapEnabled = false;
-    };
-
-    unordered_map<QueryID, QueryPollState> pollStates;
-
-    while (!gStop) {
-        for (const auto &requestConfiguration : queryStore.getQueries()) {
-            if (gStop)
-                break;
-
-            const QueryID queryID = requestConfiguration.id;
-            const string cacheKey = requestConfiguration.cacheKey();
-            unordered_set<int> &viewedAds = cacheBuckets[cacheKey];
-
-            const bool chronological = !requestConfiguration.kufar.sortType.has_value();
-            const auto stateIt = pollStates.find(queryID);
-            const bool coldStart = stateIt == pollStates.end();
-            const bool useCatchUp = chronological && !coldStart;
-
-            time_t windowStart = 0;
-            if (useCatchUp) {
-                const time_t overlap = stateIt->second.overlapEnabled ? POLL_FRONTIER_OVERLAP_SECONDS : 0;
-                windowStart = max(stateIt->second.frontier - overlap, stateIt->second.suppressBefore);
-            }
-
-            vector<Ad> fetched;
-            size_t processCount = 0;
-            bool fetchSucceeded = true;
-
-            try {
-                if (!useCatchUp) {
-                    fetched = getSearchPage(
-                        requestConfiguration.kufar,
-                        nullopt,
-                        COLD_START_LISTING_LIMIT
-                    ).ads;
-                    processCount = fetched.size();
-
-                    if (coldStart && chronological) {
-                        spdlog::debug(
-                            "[Poll] Query {} cold start: considering the newest {} listing(s).",
-                            queryID,
-                            processCount
-                        );
-                    }
-                } else {
-                    FetchOptions options;
-                    options.pageSize = DEFAULT_PAGE_SIZE;
-                    options.maxPages = POLL_MAX_PAGES;
-                    options.newerThan = windowStart;
-                    options.shouldStop = [] { return gStop != 0; };
-
-                    FetchResult result = getAllAds(requestConfiguration.kufar, options);
-                    fetched = std::move(result.ads);
-                    processCount = fetched.size();
-
-                    if (result.truncated && !gStop) {
-                        spdlog::warn(
-                            "[Poll] Query {} reached the page limit ({} pages); "
-                            "older listings in this window were skipped.",
-                            queryID,
-                            POLL_MAX_PAGES
-                        );
-                    }
-                }
-            } catch (const exception &exc) {
-                spdlog::error("(poll) [Query: {}]: {}", queryID, exc.what());
-                fetchSucceeded = false;
-                fetched.clear();
-                processCount = 0;
-            }
-
-            bool interrupted = gStop != 0;
-            bool allSent = true;
-
-            for (size_t index = 0; index < processCount; index++) {
-                if (gStop) {
-                    interrupted = true;
-                    break;
-                }
-
-                const Ad &advert = fetched[index];
-
-                // Listings below the polling window are history that the pagination happened to include on its last page
-                if (useCatchUp && advert.date < windowStart)
-                    continue;
-
-                if (viewedAds.contains(advert.id))
-                    continue;
-
-                spdlog::info(
-                    "[New]: Adding [Title: {}], [ID: {}], [Tag: {}], [Topic: {}], [Link: {}]",
-                    advert.title,
-                    advert.id,
-                    advert.tag.value_or(PROPERTY_UNDEFINED),
-                    cacheKey,
-                    advert.link
-                );
-
-                try {
-                    const auto priceAssessment = marketAnalyzer.rate(advert);
-                    const auto adMessage = telegramClient.sendAdvert(advert, requestConfiguration.messageThreadID, priceAssessment);
-
-                    viewedAds.insert(advert.id);
-                    cacheDirty = true;
-
-                    if (!priceAssessment.has_value() && adMessage != nullptr) {
-                        marketAnalyzer.rateDeferred(
-                            advert,
-                            [&telegramClient, adMessage, advert](Market::PriceAssessment newAssessment) {
-                                telegramClient.editAdvertAssessment(adMessage, advert, newAssessment);
-                            }
-                        );
-                    }
-                } catch (const exception &exc) {
-                    allSent = false;
-                    spdlog::error("(sendAdvert) [Query: {}] [Topic: {}]: {}", queryID, cacheKey, exc.what());
-                }
-
-                usleep(300000); // 0.3s
-            }
-
-            if (fetchSucceeded && chronological && !interrupted && allSent) {
-                time_t newest = coldStart ? 0 : stateIt->second.frontier;
-                for (const Ad &advert : fetched) {
-                    newest = max(newest, advert.date);
-                }
-
-                if (newest > 0) {
-                    QueryPollState &state = pollStates[queryID];
-                    state.frontier = newest;
-
-                    if (coldStart) {
-                        state.suppressBefore = newest;
-                    } else {
-                        state.overlapEnabled = true;
-                    }
-                }
-            }
-
-            DEBUG_MSG("(QueryDelay) Sleeping for: {}s.", programConfiguration.queryDelaySeconds);
-            interruptibleSleep(programConfiguration.queryDelaySeconds);
-        }
-
-        DEBUG_MSG("(LoopDelay) Sleeping for: {}s.", programConfiguration.loopDelaySeconds);
-        interruptibleSleep(programConfiguration.loopDelaySeconds);
+    try {
+        scheduler.run();
+    } catch (const exception &exc) {
+        spdlog::error("[Poll] Scheduler stopped with an error: {}", exc.what());
     }
 
-    saveCache(true);
+    deliveryWorker.stopAndDrain(5s);
+    cacheStore.saveNow();
+
     return 0;
 }

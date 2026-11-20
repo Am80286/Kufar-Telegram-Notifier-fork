@@ -39,8 +39,10 @@
             ]
         }
     ],
-    "delays": {
-        "query": 10,
-        "loop": 1800
+    "scheduler": {
+        "default-interval-seconds": 60,
+        "min-interval-seconds": 60,
+        "max-interval-seconds": 300,
+        "jitter-percent": 15
     }
 }

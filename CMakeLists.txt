@@ -52,6 +52,7 @@ add_executable(
     src/market_normalizer.cpp
     src/cache.cpp
     src/delivery.cpp
+    src/scheduler.cpp
     src/telegram_sender.cpp
 )
 
@@ -115,4 +116,17 @@ if(BUILD_TESTING)
     )
     target_link_libraries(delivery-tests PRIVATE spdlog::spdlog nlohmann_json::nlohmann_json Threads::Threads)
     add_test(NAME delivery-tests COMMAND delivery-tests)
+
+    add_executable(
+        scheduler-tests
+        tests/scheduler_tests.cpp
+        src/scheduler.cpp
+        src/cache.cpp
+        src/queries.cpp
+        src/kufar.cpp
+        src/networking.cpp
+        src/helperfunctions.cpp
+    )
+    target_link_libraries(scheduler-tests PRIVATE curl spdlog::spdlog nlohmann_json::nlohmann_json Threads::Threads)
+    add_test(NAME scheduler-tests COMMAND scheduler-tests)
 endif()

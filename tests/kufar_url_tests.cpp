@@ -126,6 +126,23 @@ namespace {
         legacyQuery["limit"] = 25;
         const queries::QueryConfiguration legacyParsed = queries::parseQuery(legacyQuery);
         check(legacyParsed.kufar.tag == "iphone", "legacy limit key is ignored", __LINE__);
+
+        json intervalQuery = queryWithID;
+        intervalQuery["poll-interval-seconds"] = 30;
+        const queries::QueryConfiguration intervalParsed = queries::parseQuery(intervalQuery);
+        check(intervalParsed.pollIntervalSeconds == 30, "per-query interval parsed", __LINE__);
+        check(
+            intervalParsed.getDescriptionConcise().find("30") != string::npos,
+            "per-query interval is described",
+            __LINE__
+        );
+
+        json invalidInterval = queryWithID;
+        invalidInterval["poll-interval-seconds"] = 0;
+        expectError(
+            [&invalidInterval] { queries::parseQuery(invalidInterval); },
+            "poll-interval-seconds"
+        );
     }
 
     void testAllComputerComponentTypes() {

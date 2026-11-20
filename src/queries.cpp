@@ -85,6 +85,7 @@ namespace queries {
         return fmt::format(
                 "\t- Название: {}\n"
             "\t- ID темы чата: {}\n"
+            "\t- Интервал опроса (с): {}\n"
             "\t- Поиск только по заголовку: {}\n"
             "\t- Цена:\n"
             "\t\t- Минимальная: {} BYN\n"
@@ -107,6 +108,7 @@ namespace queries {
             "\t- Район: {}\n",
             toString(this->kufar.tag),
             (this->messageThreadID.has_value() ? toString(this->messageThreadID) : "[основной чат]"),
+            (this->pollIntervalSeconds.has_value() ? toString(this->pollIntervalSeconds) : "[по умолчанию]"),
             toString(this->kufar.onlyTitleSearch),
             toString(this->kufar.priceRange.priceMin),
             toString(this->kufar.priceRange.priceMax),
@@ -133,6 +135,7 @@ namespace queries {
         string out;
 
         addLine(out, "Название", toStringExplicit(this->kufar.tag));
+        addLine(out, "Интервал опроса (с)", toStringExplicit(this->pollIntervalSeconds));
         addLine(out, "Поиск только по заголовку", toStringExplicit(this->kufar.onlyTitleSearch));
         addLine(out, "Минимальная цена", toStringExplicit(this->kufar.priceRange.priceMin));
         addLine(out, "Максимальная цена", toStringExplicit(this->kufar.priceRange.priceMax));
@@ -192,12 +195,17 @@ namespace queries {
         queryConfiguration.id = parseQueryID(query);
         queryConfiguration.kufar = kufarConfiguration;
         queryConfiguration.messageThreadID = getOptionalValue<int>(query, "message-thread-id");
+        queryConfiguration.pollIntervalSeconds = getOptionalValue<int>(query, "poll-interval-seconds");
 
         if (queryConfiguration.messageThreadID.has_value() && queryConfiguration.messageThreadID.value() <= 0) {
             throw runtime_error(
                     "\"message-thread-id\" должен быть положительным числом (ID темы чата), "
                     "либо отсутствовать, чтобы публиковать в основной чат."
                     );
+        }
+
+        if (queryConfiguration.pollIntervalSeconds.has_value() && queryConfiguration.pollIntervalSeconds.value() <= 0) {
+            throw runtime_error("\"poll-interval-seconds\" должен быть положительным числом.");
         }
 
         return queryConfiguration;
@@ -286,6 +294,28 @@ namespace queries {
         return json_.at("queries");
     }
 
+    std::uint64_t QueryStore::version() const {
+        lock_guard<mutex> lock(mtx_);
+        return version_;
+    }
+
+    bool QueryStore::contains(QueryID id) const {
+        lock_guard<mutex> lock(mtx_);
+
+        for (const json &query : json_.at("queries")) {
+            try {
+                if (parseQueryID(query) == id) {
+                    return true;
+                }
+            } catch (const exception &) {
+                // Queries are validated on construction; ignore malformed
+                // entries here rather than breaking delivery.
+            }
+        }
+
+        return false;
+    }
+
     void QueryStore::add(json &query) {
         lock_guard<mutex> lock(mtx_);
 
@@ -307,6 +337,7 @@ namespace queries {
         saveFile(path_, updated.dump(4));
         json_ = std::move(updated);
         query = std::move(storedQuery);
+        ++version_;
 
         if (id == numeric_limits<QueryID>::max()) {
             nextQueryID_.reset();
@@ -334,6 +365,7 @@ namespace queries {
 
         saveFile(path_, updated.dump(4));
         json_ = std::move(updated);
+        ++version_;
         return removedQuery;
     }
 }

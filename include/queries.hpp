@@ -26,6 +26,7 @@ namespace queries {
         QueryID id;
         Kufar::KufarConfiguration kufar;
         std::optional<int> messageThreadID;
+        std::optional<int> pollIntervalSeconds;
 
         std::string cacheKey() const;  
         std::string getDescription() const;
@@ -42,6 +43,8 @@ namespace queries {
             std::vector<QueryConfiguration> getQueries() const;
             nlohmann::json getRawQueries() const;
             int queryCount() const;
+            std::uint64_t version() const;
+            bool contains(QueryID id) const;
 
             void add(nlohmann::json &query);
             std::optional<QueryConfiguration> remove(QueryID id);
@@ -50,6 +53,7 @@ namespace queries {
             std::string path_;
             nlohmann::json json_;
             std::optional<QueryID> nextQueryID_ = 1;
+            std::uint64_t version_ = 1;
             mutable std::mutex mtx_;
     };
 };
