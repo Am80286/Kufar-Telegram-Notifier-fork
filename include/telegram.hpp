@@ -49,7 +49,8 @@ namespace Telegram {
         TgBot::Message::Ptr sendAdvert(
             const Kufar::Ad &,
             std::optional<int> messageThreadID,
-            const std::optional<Market::PriceAssessment> &priceAssessment = std::nullopt
+            const std::optional<Market::PriceAssessment> &priceAssessment = std::nullopt,
+            bool allowMedia = true
         ) const;
 
         void editAdvertAssessment(

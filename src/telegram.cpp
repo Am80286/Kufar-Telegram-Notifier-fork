@@ -124,13 +124,14 @@ namespace Telegram {
     TgBot::Message::Ptr Client::sendAdvert(
         const Kufar::Ad &ad,
         optional<int> threadID,
-        const optional<Market::PriceAssessment> &priceAssessment
+        const optional<Market::PriceAssessment> &priceAssessment,
+        bool allowMedia
     ) const {
         const string text = formatAdvert(ad, priceAssessment);
         const int32_t threadIDValue = messageThreadID(threadID);
         const TgBot::Api &api = bot_->getApi();
 
-        if (ad.images.empty()) {
+        if (!allowMedia || ad.images.empty()) {
             // sendMediaGroup requires 2-10 images, and sendPhoto with
             // a nonexistent placeholder URL always failed.
             TgBot::SendMessageArgs args;
