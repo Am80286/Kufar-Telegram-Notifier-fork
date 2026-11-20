@@ -50,6 +50,7 @@ add_executable(
     src/telegram_commands.cpp
     src/market.cpp
     src/market_normalizer.cpp
+    src/cache.cpp
 )
 
 target_compile_definitions(Kufar-Telegram-Notifier PRIVATE APP_VERSION="${PROJECT_VERSION}")
@@ -93,4 +94,13 @@ if(BUILD_TESTING)
     )
     target_link_libraries(market-normalizer-tests PRIVATE curl spdlog::spdlog Threads::Threads)
     add_test(NAME market-normalizer-tests COMMAND market-normalizer-tests)
+
+    add_executable(
+        cache-tests
+        tests/cache_tests.cpp
+        src/cache.cpp
+        src/helperfunctions.cpp
+    )
+    target_link_libraries(cache-tests PRIVATE spdlog::spdlog nlohmann_json::nlohmann_json Threads::Threads)
+    add_test(NAME cache-tests COMMAND cache-tests)
 endif()
