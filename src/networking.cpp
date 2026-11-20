@@ -42,6 +42,32 @@ namespace Networking {
             }
         }
 
+        // One easy handle per thread. Reusing it keeps the connection cache,
+        // DNS cache and TLS session cache alive between polling requests
+        struct ThreadCurlHandle {
+            CURL *handle = nullptr;
+
+            ThreadCurlHandle() : handle(curl_easy_init()) {
+                if (handle == nullptr) {
+                    throw std::runtime_error("Unable to initialize HTTP request.");
+                }
+            }
+
+            ~ThreadCurlHandle() {
+                if (handle != nullptr) {
+                    curl_easy_cleanup(handle);
+                }
+            }
+
+            ThreadCurlHandle(const ThreadCurlHandle &) = delete;
+            ThreadCurlHandle &operator=(const ThreadCurlHandle &) = delete;
+        };
+
+        CURL *acquireCurlHandle() {
+            thread_local ThreadCurlHandle holder;
+            return holder.handle;
+        }
+
         /**
           Hides the bot token in a URL before logging it,
           so it never ends up in the log file in plain text.
@@ -76,27 +102,28 @@ namespace Networking {
         DEBUG_MSG("[URL: {}]", redactBotToken(url));
         initializeCurl();
 
-        std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
-        if (!curl) {
-            throw std::runtime_error("Unable to initialize HTTP request.");
-        }
+        CURL *curl = acquireCurlHandle();
+        curl_easy_reset(curl);
 
         ResponseData response;
         response.maxSize = maxResponseSize;
         char errorBuffer[CURL_ERROR_SIZE] = {};
 
-        curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 1L);
-        curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, 0L);
-        curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L);
-        curl_easy_setopt(curl.get(), CURLOPT_TCP_KEEPALIVE, 1L);
-        curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 30L);
-        curl_easy_setopt(curl.get(), CURLOPT_ACCEPT_ENCODING, "");
-        curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, errorBuffer);
-        curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, writeFunction);
-        curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response);
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 0L);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+        curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+        curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "Kufar-Telegram-Notifier");
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeFunction);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
-        const CURLcode result = curl_easy_perform(curl.get());
+        const CURLcode result = curl_easy_perform(curl);
         if (result != CURLE_OK) {
             if (response.sizeExceeded) {
                 throw std::runtime_error("HTTP response exceeds the configured size limit.");
@@ -107,7 +134,7 @@ namespace Networking {
         }
 
         long statusCode = 0;
-        curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &statusCode);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
         if (statusCode < 200 || statusCode >= 300) {
             throw std::runtime_error(
                 "HTTP request returned status " + std::to_string(statusCode) + "."
