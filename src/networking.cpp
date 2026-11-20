@@ -5,22 +5,35 @@
 //  Created by Macintosh on 04.06.2022.
 //
 
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <chrono>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 
 #include <curl/curl.h>
 #include "networking.hpp"
+#include "request_gate.hpp"
 #include "helperfunctions.hpp"
 
 namespace Networking {
     using std::string;
 
     namespace {
+        std::atomic<RequestGate *> gRequestGate{nullptr};
+
         struct ResponseData {
             string body;
             size_t maxSize = 0;
             bool sizeExceeded = false;
+        };
+
+        struct ResponseHeaders {
+            std::optional<std::chrono::seconds> retryAfter;
         };
 
         static size_t writeFunction(void *ptr, size_t size, size_t nmemb, ResponseData *data) {
@@ -32,6 +45,54 @@ namespace Networking {
             }
 
             data->body.append(static_cast<char *>(ptr), bytes);
+            return bytes;
+        }
+
+        static size_t headerFunction(char *buffer, size_t size, size_t nitems, ResponseHeaders *headers) {
+            const size_t bytes = size * nitems;
+            if (headers == nullptr) {
+                return bytes;
+            }
+
+            std::string_view line(buffer, bytes);
+            while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+                line.remove_suffix(1);
+            }
+
+            const size_t separator = line.find(':');
+            if (separator == std::string_view::npos) {
+                return bytes;
+            }
+
+            string name(line.substr(0, separator));
+            std::transform(
+                name.begin(),
+                name.end(),
+                name.begin(),
+                [](unsigned char character) { return static_cast<char>(std::tolower(character)); }
+            );
+
+            if (name != "retry-after") {
+                return bytes;
+            }
+
+            std::string_view value = line.substr(separator + 1);
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) {
+                value.remove_prefix(1);
+            }
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
+                value.remove_suffix(1);
+            }
+
+            try {
+                const int seconds = std::stoi(string(value));
+                if (seconds >= 0) {
+                    headers->retryAfter = std::chrono::seconds(seconds);
+                }
+            } catch (const std::exception &) {
+                // Retry-After may be an HTTP date; ignore unsupported forms.
+            }
+
             return bytes;
         }
 
@@ -89,6 +150,31 @@ namespace Networking {
         }
     }
 
+    void setRequestGate(RequestGate *gate) {
+        gRequestGate.store(gate);
+    }
+
+    RequestGate *requestGate() {
+        return gRequestGate.load();
+    }
+
+    HttpError::HttpError(
+        int statusCode,
+        std::optional<std::chrono::seconds> retryAfter,
+        const string &message
+    ) : std::runtime_error(message),
+        statusCode_(statusCode),
+        retryAfter_(retryAfter) {
+    }
+
+    int HttpError::statusCode() const {
+        return statusCode_;
+    }
+
+    const std::optional<std::chrono::seconds> &HttpError::retryAfter() const {
+        return retryAfter_;
+    }
+
     string urlEncode(const string &text) {
         CURL *curl = curl_easy_init();
         char *encoded = curl_easy_escape(curl, text.c_str(), 0);
@@ -102,11 +188,17 @@ namespace Networking {
         DEBUG_MSG("[URL: {}]", redactBotToken(url));
         initializeCurl();
 
+        RequestGate *gate = requestGate();
+        if (gate != nullptr && !gate->acquire()) {
+            throw RequestCancelled("HTTP request cancelled during shutdown.");
+        }
+
         CURL *curl = acquireCurlHandle();
         curl_easy_reset(curl);
 
         ResponseData response;
         response.maxSize = maxResponseSize;
+        ResponseHeaders headers;
         char errorBuffer[CURL_ERROR_SIZE] = {};
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -120,6 +212,8 @@ namespace Networking {
         curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "Kufar-Telegram-Notifier");
         curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerFunction);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &headers);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeFunction);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
@@ -129,16 +223,30 @@ namespace Networking {
                 throw std::runtime_error("HTTP response exceeds the configured size limit.");
             }
 
+            if (gate != nullptr) {
+                gate->reportFailure(0, std::nullopt);
+            }
+
             const string details = errorBuffer[0] != '\0' ? errorBuffer : curl_easy_strerror(result);
-            throw std::runtime_error("HTTP request failed: " + details);
+            throw HttpError(0, std::nullopt, "HTTP request failed: " + details);
         }
 
         long statusCode = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
         if (statusCode < 200 || statusCode >= 300) {
-            throw std::runtime_error(
+            if (gate != nullptr) {
+                gate->reportFailure(static_cast<int>(statusCode), headers.retryAfter);
+            }
+
+            throw HttpError(
+                static_cast<int>(statusCode),
+                headers.retryAfter,
                 "HTTP request returned status " + std::to_string(statusCode) + "."
             );
+        }
+
+        if (gate != nullptr) {
+            gate->reportSuccess();
         }
 
         return std::move(response.body);

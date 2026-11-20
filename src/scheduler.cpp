@@ -14,6 +14,7 @@
 #include <spdlog/spdlog.h>
 
 #include "scheduler.hpp"
+#include "networking.hpp"
 #include "helperfunctions.hpp"
 
 namespace scheduling {
@@ -22,6 +23,47 @@ namespace scheduling {
 
     namespace {
         constexpr auto MAX_WAIT_SLICE = 250ms;
+
+        void sleepBeforeRetry(int attempt) {
+            const auto delay = std::chrono::milliseconds(500 * (1 << std::min(attempt, 4)));
+            std::this_thread::sleep_for(delay);
+        }
+
+        vector<Kufar::Ad> fetchNewestWithRetry(
+            const Kufar::KufarConfiguration &configuration,
+            int limit
+        ) {
+            for (int attempt = 0; ; ++attempt) {
+                try {
+                    return Kufar::getSearchPage(configuration, nullopt, limit).ads;
+                } catch (const Networking::RequestCancelled &) {
+                    throw;
+                } catch (const Networking::HttpError &exc) {
+                    const int status = exc.statusCode();
+                    const bool retryable = status == 0 || status == 429 || status >= 500;
+                    if (!retryable || attempt >= 2) {
+                        throw;
+                    }
+                    spdlog::warn(
+                        "[Poll] Cold fetch failed with HTTP {} (attempt {}/3): {}",
+                        status,
+                        attempt + 1,
+                        exc.what()
+                    );
+                } catch (const exception &exc) {
+                    if (attempt >= 2) {
+                        throw;
+                    }
+                    spdlog::warn(
+                        "[Poll] Cold fetch failed (attempt {}/3): {}",
+                        attempt + 1,
+                        exc.what()
+                    );
+                }
+
+                sleepBeforeRetry(attempt);
+            }
+        }
     }
 
     PollingScheduler::PollingScheduler(
@@ -68,9 +110,7 @@ namespace scheduling {
         }
 
         if (!newestFetcher_) {
-            newestFetcher_ = [](const Kufar::KufarConfiguration &configuration, int limit) {
-                return Kufar::getSearchPage(configuration, nullopt, limit).ads;
-            };
+            newestFetcher_ = fetchNewestWithRetry;
         }
         if (!windowFetcher_) {
             windowFetcher_ = [](const Kufar::KufarConfiguration &configuration, const Kufar::FetchOptions &options) {

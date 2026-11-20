@@ -53,6 +53,7 @@ add_executable(
     src/cache.cpp
     src/delivery.cpp
     src/scheduler.cpp
+    src/request_gate.cpp
     src/telegram_sender.cpp
 )
 
@@ -68,6 +69,7 @@ if(BUILD_TESTING)
         tests/kufar_url_tests.cpp
         src/kufar_url.cpp
         src/networking.cpp
+        src/request_gate.cpp
         src/queries.cpp
         src/helperfunctions.cpp
         src/kufar.cpp
@@ -82,6 +84,7 @@ if(BUILD_TESTING)
         src/market_normalizer.cpp
         src/kufar.cpp
         src/networking.cpp
+        src/request_gate.cpp
         src/helperfunctions.cpp
     )
     target_link_libraries(market-tests PRIVATE curl spdlog::spdlog Threads::Threads)
@@ -93,6 +96,7 @@ if(BUILD_TESTING)
         src/market_normalizer.cpp
         src/kufar.cpp
         src/networking.cpp
+        src/request_gate.cpp
         src/helperfunctions.cpp
     )
     target_link_libraries(market-normalizer-tests PRIVATE curl spdlog::spdlog Threads::Threads)
@@ -125,8 +129,17 @@ if(BUILD_TESTING)
         src/queries.cpp
         src/kufar.cpp
         src/networking.cpp
+        src/request_gate.cpp
         src/helperfunctions.cpp
     )
     target_link_libraries(scheduler-tests PRIVATE curl spdlog::spdlog nlohmann_json::nlohmann_json Threads::Threads)
     add_test(NAME scheduler-tests COMMAND scheduler-tests)
+
+    add_executable(
+        request-gate-tests
+        tests/request_gate_tests.cpp
+        src/request_gate.cpp
+    )
+    target_link_libraries(request-gate-tests PRIVATE Threads::Threads)
+    add_test(NAME request-gate-tests COMMAND request-gate-tests)
 endif()

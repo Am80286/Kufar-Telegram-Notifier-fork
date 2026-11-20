@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <random>
 #include <stdexcept>
 #include <thread>
 #include <unordered_set>
@@ -55,6 +56,25 @@ namespace Kufar {
     }
 
     namespace {
+        void sleepBeforeRetry(int attempt, int baseMilliseconds) {
+            if (baseMilliseconds <= 0) {
+                return;
+            }
+
+            const long long factor = 1LL << std::min(attempt, 5);
+            long long delay = std::min<long long>(
+                30000,
+                static_cast<long long>(baseMilliseconds) * factor
+            );
+
+            static thread_local std::mt19937 rng(std::random_device{}());
+            const long long jitter = std::max<long long>(1, delay / 5);
+            std::uniform_int_distribution<long long> distribution(-jitter, jitter);
+            delay = std::max<long long>(0, delay + distribution(rng));
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+        }
+
         void insertImageURL (vector<string> &images, const string &id, const bool yams_storage) {
             if (yams_storage) {
                 images.push_back("https://yams.kufar.by/api/v1/kufar-ads/images/" + id.substr(0, 2) + "/" + id + ".jpg?rule=pictures");
@@ -379,6 +399,24 @@ namespace Kufar {
                 try {
                     page = getSearchPage(configuration, cursor, pageSize);
                     break;
+                } catch (const Networking::RequestCancelled &) {
+                    throw;
+                } catch (const Networking::HttpError &exc) {
+                    const int status = exc.statusCode();
+                    const bool retryable = status == 0 || status == 429 || status >= 500;
+
+                    if (!retryable || attempt >= options.retryCount) {
+                        throw;
+                    }
+
+                    spdlog::warn(
+                        "[Kufar] Page fetch failed with HTTP {} (attempt {}/{}): {}",
+                        status,
+                        attempt + 1,
+                        options.retryCount + 1,
+                        exc.what()
+                    );
+                    sleepBeforeRetry(attempt, options.retryDelayMilliseconds);
                 } catch (const exception &exc) {
                     if (attempt >= options.retryCount) {
                         throw;
@@ -389,9 +427,7 @@ namespace Kufar {
                         options.retryCount + 1,
                         exc.what()
                     );
-                    if (options.retryDelayMilliseconds > 0) {
-                        this_thread::sleep_for(chrono::milliseconds(options.retryDelayMilliseconds));
-                    }
+                    sleepBeforeRetry(attempt, options.retryDelayMilliseconds);
                 }
             }
 

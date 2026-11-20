@@ -24,7 +24,9 @@
 #include "kufar.hpp"
 #include "logging.hpp"
 #include "market.hpp"
+#include "networking.hpp"
 #include "queries.hpp"
+#include "request_gate.hpp"
 #include "scheduler.hpp"
 #include "telegram.hpp"
 #include "telegram_sender.hpp"
@@ -62,6 +64,7 @@ struct ProgramConfiguration {
     Files files;
 
     scheduling::SchedulerConfiguration scheduler;
+    Networking::RequestGateConfig kufarRequest;
     // Retained only for backwards-compatible configuration parsing
     int queryDelaySeconds = 5;
     int loopDelaySeconds = 30;
@@ -160,6 +163,46 @@ void loadJSONConfigurationData(const json &data, ProgramConfiguration &programCo
         data,
         programConfiguration.loopDelaySeconds
     );
+
+    if (!data.contains("scheduler") && data.contains("delays")) {
+        spdlog::warn(
+            "[Конфигурация] Раздел \"scheduler\" отсутствует; используется запасной "
+            "интервал {}с из \"delays.loop\".",
+            programConfiguration.scheduler.defaultInterval.count()
+        );
+    }
+
+    if (data.contains("kufar")) {
+        const json &kufarData = data.at("kufar");
+        if (!kufarData.is_object()) {
+            throw runtime_error("Поле \"kufar\" должно быть объектом.");
+        }
+
+        programConfiguration.kufarRequest.requestsPerSecond = kufarData.value(
+            "requests-per-second",
+            programConfiguration.kufarRequest.requestsPerSecond
+        );
+        programConfiguration.kufarRequest.burst = kufarData.value(
+            "burst",
+            programConfiguration.kufarRequest.burst
+        );
+        programConfiguration.kufarRequest.cooldown = chrono::seconds(
+            kufarData.value(
+                "cooldown-seconds",
+                static_cast<int>(programConfiguration.kufarRequest.cooldown.count())
+            )
+        );
+
+        if (programConfiguration.kufarRequest.requestsPerSecond <= 0.0) {
+            throw runtime_error("\"kufar.requests-per-second\" должен быть положительным.");
+        }
+        if (programConfiguration.kufarRequest.burst <= 0) {
+            throw runtime_error("\"kufar.burst\" должен быть положительным.");
+        }
+        if (programConfiguration.kufarRequest.cooldown.count() <= 0) {
+            throw runtime_error("\"kufar.cooldown-seconds\" должен быть положительным.");
+        }
+    }
 }
 
 void printJSONConfigurationData(const ProgramConfiguration &programConfiguration) {
@@ -181,6 +224,16 @@ void printJSONConfigurationData(const ProgramConfiguration &programConfiguration
         programConfiguration.scheduler.minInterval.count(),
         programConfiguration.scheduler.maxInterval.count(),
         programConfiguration.scheduler.jitterPercent
+    );
+
+    spdlog::info(
+        "\n- Kufar:\n"
+        "\t- Запросов в секунду: {}\n"
+        "\t- Burst: {}\n"
+        "\t- Cooldown: {}с.",
+        programConfiguration.kufarRequest.requestsPerSecond,
+        programConfiguration.kufarRequest.burst,
+        programConfiguration.kufarRequest.cooldown.count()
     );
 }
 
@@ -267,11 +320,18 @@ int main(int argc, char **argv) {
     ProgramConfiguration programConfiguration;
     optional<cache::CacheStore> cacheStorage;
     optional<queries::QueryStore> queryStoreStorage;
+    optional<Networking::RequestGate> requestGateStorage;
 
     try {
         programConfiguration.files = loadFiles(options);
         loadJSONConfigurationData(programConfiguration.files.configuration.contents, programConfiguration);
         printJSONConfigurationData(programConfiguration);
+
+        requestGateStorage.emplace(
+            programConfiguration.kufarRequest,
+            [] { return gStop != 0; }
+        );
+        Networking::setRequestGate(&*requestGateStorage);
 
         cacheStorage.emplace(options.cachePath, programConfiguration.files.cache.contents);
         queryStoreStorage.emplace(
@@ -294,6 +354,7 @@ int main(int argc, char **argv) {
     }
 
     Telegram::Client telegramClient(programConfiguration.telegramConfiguration, queryStore);
+
     Market::MarketAnalyzer marketAnalyzer;
 
     delivery::SendFunction send = delivery::makeTelegramSender(telegramClient, marketAnalyzer);
