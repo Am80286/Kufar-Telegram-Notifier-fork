@@ -149,4 +149,15 @@ void saveFile(const std::string &path, const std::string &contents);
  */
 std::string maskToken(const std::string &token);
 
+/**
+  Escapes text so it can be safely embedded in Telegram HTML
+  messages and in HTML attributes.
+ */
+std::string escapeHTML(const std::string &text);
+
+/**
+  Converts a timestamp to local time in a platform-independent way.
+ */
+std::tm localTime(const std::time_t &value);
+
 #endif /* helperfunctions_hpp */

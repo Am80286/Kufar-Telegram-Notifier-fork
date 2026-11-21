@@ -16,6 +16,7 @@
 #include "telegram.hpp"
 #include "kufar_url.hpp"
 #include "queries.hpp"
+#include "helperfunctions.hpp"
 
 
 namespace Telegram {
@@ -25,6 +26,106 @@ namespace Telegram {
     using namespace Telegram;
     using namespace queries;
     using namespace Kufar;
+
+    namespace {
+        string groupDigits(long long value) {
+            string digits = to_string(value);
+            for (ptrdiff_t position = static_cast<ptrdiff_t>(digits.size()) - 3;
+                 position > 0;
+                 position -= 3) {
+                digits.insert(static_cast<size_t>(position), " ");
+            }
+            return digits;
+        }
+
+        string formatPriceRange(const PriceRange &priceRange) {
+            const optional<int> &min = priceRange.priceMin;
+            const optional<int> &max = priceRange.priceMax;
+
+            if (min.has_value() && max.has_value()) {
+                return groupDigits(min.value()) + "–" + groupDigits(max.value()) + " BYN";
+            }
+            if (min.has_value()) {
+                return "от " + groupDigits(min.value()) + " BYN";
+            }
+            if (max.has_value()) {
+                return "до " + groupDigits(max.value()) + " BYN";
+            }
+
+            return "";
+        }
+
+        string formatTag(const string &tag) {
+            if (tag.empty() || tag.find_first_of(" \t\n") != string::npos) {
+                return tag;
+            }
+            return "#" + tag;
+        }
+
+        string formatLocation(const KufarConfiguration &configuration) {
+            string location;
+
+            if (configuration.region.has_value()) {
+                location = escapeHTML(EnumString::region(configuration.region.value()));
+            }
+
+            if (configuration.areas.has_value() && !configuration.areas->empty()) {
+                string areas;
+                for (const int area : configuration.areas.value()) {
+                    const string name = EnumString::area(area);
+                    if (name.empty() || name.front() == '[') {
+                        continue;
+                    }
+                    if (!areas.empty()) {
+                        areas += ", ";
+                    }
+                    areas += escapeHTML(name);
+                }
+
+                if (!areas.empty()) {
+                    location = location.empty() ? areas : location + ", " + areas;
+                }
+            }
+
+            return location;
+        }
+
+        string formatQuerySummary(size_t index, const QueryConfiguration &query) {
+            const string displayName = query.getDisplayName();
+            string text = fmt::format("<b>{}. {}</b>\n", index, escapeHTML(displayName));
+
+            const bool hasLabel = query.label.has_value() && !query.label->empty();
+            if (hasLabel && query.kufar.tag.has_value() && !query.kufar.tag->empty()) {
+                text += "🔎 " + escapeHTML(formatTag(query.kufar.tag.value())) + "\n";
+            }
+
+            const string category = query.getCategoryName();
+            if (!category.empty() && category != displayName) {
+                text += "📦 " + escapeHTML(category) + "\n";
+            }
+
+            if (const string price = formatPriceRange(query.kufar.priceRange);
+                !price.empty() && price != displayName) {
+                text += "💰 " + price + "\n";
+            }
+
+            if (const string location = formatLocation(query.kufar);
+                !location.empty() && location != displayName) {
+                text += "📍 " + location + "\n";
+            }
+
+            if (query.pollIntervalSeconds.has_value()) {
+                text += "🕒 каждые " + to_string(query.pollIntervalSeconds.value()) + " с\n";
+            }
+
+            if (query.kufar.condition.has_value()) {
+                text += "🔹 Состояние: " +
+                        escapeHTML(EnumString::itemCondition(query.kufar.condition.value())) + "\n";
+            }
+
+            return text;
+        }
+    }
 
     CommandsHandler::CommandsHandler(Bot &bot, const TelegramConfiguration &config, QueryStore &queryStore)
         : bot_(bot),
@@ -95,6 +196,7 @@ namespace Telegram {
             replyArgs.messageThreadId = message->messageThreadId.value();
 
         replyArgs.text = text;
+        replyArgs.parseMode = "HTML";
 
         bot_.getApi().sendMessage(replyArgs);
     }
@@ -106,57 +208,79 @@ namespace Telegram {
         vector<string> args = parseArgs(message);
         if (args.size() < 2)
         {
-            reply(message, "Вы не указали ссылку на поиск");
+            reply(message, "❌ <b>Не указана ссылка на поиск</b>\n\n"
+                           "Использование: <code>/add ссылка [метка]</code>");
             return;
         }
 
         string url = args[1];
+        string label;
+        for (size_t i = 2; i < args.size(); i++) {
+            if (!label.empty()) {
+                label += " ";
+            }
+            label += args[i];
+        }
 
-        boost::asio::post(thread_pool_, [this, message, url = std::move(url)] {
+        boost::asio::post(thread_pool_, [this, message, url = std::move(url), label = std::move(label)] {
             try {
                 json newQuery = importSearchQuery(url);
                 if (message->messageThreadId.has_value())
                     newQuery["message-thread-id"] = message->messageThreadId.value();
+                if (!label.empty())
+                    newQuery["label"] = label;
 
                 queryStore_.add(newQuery);
-                reply(message, "Поиск добавлен");
+
+                const QueryConfiguration addedQuery = parseQuery(newQuery);
+                reply(message, "✅ <b>Поиск добавлен</b>\n🏷 {}", escapeHTML(addedQuery.getDisplayName()));
+
                 spdlog::info(
                     "\n- Добавлен запрос:\n{}- Пользователь: {} (ID:{})\n", 
-                    parseQuery(newQuery).getDescription(),
+                    addedQuery.getDescription(),
                     message->from->username.value_or("no username"),
                     message->from->id
                 );
             } catch (const std::exception& exc) {
                 spdlog::error("[Telegram]: /add command error: {}", exc.what());
-                reply(message, "Произошла ошибка:\n{}\nВозможно вы ввели неправильную ссылку", exc.what());
+                reply(message, "❌ <b>Не удалось добавить поиск</b>\n\n"
+                               "<code>{}</code>\n\n"
+                               "Проверьте ссылку и попробуйте снова.",
+                               escapeHTML(exc.what()));
             }
         });
     }
 
     void CommandsHandler::handleStart(Message::Ptr message) {
         if (message -> chat -> id != config_.chatID) {
-            reply(message, "Это приватный бот");
+            reply(message, "🔒 <b>Это приватный бот</b>");
         } else {
-            reply(message, "Бот включен и работает");
+            reply(message, "✅ <b>Бот включён и работает</b>");
         }
     }
     
     void CommandsHandler::handleList(TgBot::Message::Ptr message) {     
-        if (!queryStore_.queryCount())
-            return;
-
         string replyString;
+        size_t idx = 0;
 
-        int idx = 0;
-        for (const auto query : queryStore_.getQueries()) {
+        for (const auto &query : queryStore_.getQueries()) {
             if (query.messageThreadID == message->messageThreadId) {
                 idx++;
-                replyString += fmt::format("Поиск {}:\n{}\n", idx, query.getDescriptionConcise());
+                if (idx > 1) {
+                    replyString += "\n";
+                }
+                replyString += formatQuerySummary(idx, query);
             }
         }
 
-        if (idx)
-            reply(message, fmt::runtime(replyString));
+        if (idx == 0) {
+            reply(message, "🔎 <b>В этой теме пока нет поисков</b>\n\n"
+                           "Добавьте поиск командой <code>/add ссылка</code>");
+            return;
+        }
+
+        // replyImpl avoids treating user-provided text as a format string.
+        replyImpl(message, "🔎 <b>Ваши поиски</b>\n\n" + replyString);
     }
 
     void CommandsHandler::handleDel(TgBot::Message::Ptr message) {
@@ -165,7 +289,8 @@ namespace Telegram {
 
         const vector<string> args = parseArgs(message);
         if (args.size() != 2) {
-            reply(message, "Использование: /del N, где N — номер поиска из /list");
+            reply(message, "❌ <b>Неверный формат команды</b>\n\n"
+                           "Использование: <code>/del N</code>, где N — номер поиска из /list");
             return;
         }
 
@@ -175,13 +300,13 @@ namespace Telegram {
         const char *end = begin + indexText.size();
         const auto [position, error] = from_chars(begin, end, requestedIndex);
         if (indexText.empty() || error != errc() || position != end || requestedIndex == 0) {
-            reply(message, "Номер поиска должен быть положительным целым числом");
+            reply(message, "❌ <b>Номер поиска должен быть положительным целым числом</b>");
             return;
         }
 
         const vector<QueryConfiguration> storedQueries = queryStore_.getQueries();
         if (storedQueries.empty()) {
-            reply(message, "У вас нет добавленных поисков");
+            reply(message, "🔎 <b>У вас нет добавленных поисков</b>");
             return;
         }
 
@@ -198,7 +323,8 @@ namespace Telegram {
         }
 
         if (!targetID.has_value()) {
-            reply(message, "Поиск №{} не найден в этой теме. Используйте /list", requestedIndex);
+            reply(message, "❌ Поиск №{} не найден в этой теме\n\n"
+                           "Используйте /list, чтобы увидеть номера поисков.", requestedIndex);
             return;
         }
 
@@ -207,16 +333,18 @@ namespace Telegram {
             removedQuery = queryStore_.remove(targetID.value());
         } catch (const exception &exc) {
             spdlog::error("[Telegram]: /del command error: {}", exc.what());
-            reply(message, "Произошла ошибка при удалении поиска:\n{}", exc.what());
+            reply(message, "❌ <b>Не удалось удалить поиск</b>\n\n<code>{}</code>",
+                           escapeHTML(exc.what()));
             return;
         }
 
         if (!removedQuery.has_value()) {
-            reply(message, "Этот поиск уже был удалён. Используйте /list");
+            reply(message, "❌ <b>Этот поиск уже был удалён</b>\n\n"
+                           "Используйте /list, чтобы увидеть актуальный список.");
             return;
         }
 
-        reply(message, "Поиск №{} удалён", requestedIndex);
+        reply(message, "🗑 <b>Поиск №{} удалён</b>", requestedIndex);
         spdlog::info(
             "\n- Удалён запрос (ID:{}):\n{}- Пользователь: {} (ID:{})\n",
             removedQuery->id,

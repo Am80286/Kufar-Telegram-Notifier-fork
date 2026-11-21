@@ -6,6 +6,7 @@
 //
 
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <unordered_set>
 
@@ -37,6 +38,110 @@ namespace queries {
             }
 
             return joinedAreas;
+        }
+
+        string trimText(const string &text) {
+            size_t begin = 0;
+            size_t end = text.size();
+
+            while (begin < end && isspace(static_cast<unsigned char>(text[begin]))) {
+                begin++;
+            }
+            while (end > begin && isspace(static_cast<unsigned char>(text[end - 1]))) {
+                end--;
+            }
+
+            return text.substr(begin, end - begin);
+        }
+
+        size_t utf8Length(const string &text) {
+            size_t length = 0;
+            for (const unsigned char character : text) {
+                if ((character & 0xC0) != 0x80) {
+                    length++;
+                }
+            }
+            return length;
+        }
+
+        optional<string> parseLabel(const optional<string> &rawLabel) {
+            if (!rawLabel.has_value()) {
+                return nullopt;
+            }
+
+            const string label = trimText(rawLabel.value());
+            if (label.empty()) {
+                return nullopt;
+            }
+            if (label.find_first_of("\r\n") != string::npos) {
+                throw runtime_error("\"label\" не должен содержать переводы строк.");
+            }
+            if (utf8Length(label) > 64) {
+                throw runtime_error("\"label\" должен быть не длиннее 64 символов.");
+            }
+
+            return label;
+        }
+
+        string groupDigits(long long value) {
+            string digits = to_string(value);
+            for (ptrdiff_t position = static_cast<ptrdiff_t>(digits.size()) - 3;
+                 position > 0;
+                 position -= 3) {
+                digits.insert(static_cast<size_t>(position), " ");
+            }
+            return digits;
+        }
+
+        string categoryName(const KufarConfiguration &configuration) {
+            string leaf;
+            if (configuration.subCategory.has_value()) {
+                const string name = EnumString::subCategory(configuration.subCategory.value());
+                if (!name.empty() && name.front() != '[') {
+                    leaf = name;
+                }
+            }
+
+            optional<int> parentCode = configuration.category;
+            if (!parentCode.has_value() && configuration.subCategory.has_value()) {
+                // Kufar nests leaf categories in thousand-wide parent ranges,
+                // e.g. 16010 under 16000.
+                parentCode = (configuration.subCategory.value() / 1000) * 1000;
+            }
+
+            if (parentCode.has_value()) {
+                const string parent =
+                    EnumString::category(static_cast<Category>(parentCode.value()));
+                if (!parent.empty() && parent.front() != '[') {
+                    return leaf.empty() ? parent : parent + " › " + leaf;
+                }
+            }
+
+            return leaf;
+        }
+
+        string priceRangeName(const PriceRange &priceRange) {
+            const optional<int> &min = priceRange.priceMin;
+            const optional<int> &max = priceRange.priceMax;
+
+            if (min.has_value() && max.has_value()) {
+                return groupDigits(min.value()) + "–" + groupDigits(max.value()) + " BYN";
+            }
+            if (min.has_value()) {
+                return "от " + groupDigits(min.value()) + " BYN";
+            }
+            if (max.has_value()) {
+                return "до " + groupDigits(max.value()) + " BYN";
+            }
+
+            return "";
+        }
+
+        string formatTag(const string &tag) {
+            if (tag.empty() || tag.find_first_of(" \t\n") != string::npos) {
+                return tag;
+            }
+            return "#" + tag;
         }
 
         void addLine(std::string& out, std::string_view label, const std::optional<std::string>& value) {
@@ -84,6 +189,7 @@ namespace queries {
     string QueryConfiguration::getDescription() const {
         return fmt::format(
                 "\t- Название: {}\n"
+            "\t- Метка: {}\n"
             "\t- ID темы чата: {}\n"
             "\t- Интервал опроса (с): {}\n"
             "\t- Поиск только по заголовку: {}\n"
@@ -107,6 +213,7 @@ namespace queries {
             "\t- Город: {}\n"
             "\t- Район: {}\n",
             toString(this->kufar.tag),
+            toString(this->label),
             (this->messageThreadID.has_value() ? toString(this->messageThreadID) : "[основной чат]"),
             (this->pollIntervalSeconds.has_value() ? toString(this->pollIntervalSeconds) : "[по умолчанию]"),
             toString(this->kufar.onlyTitleSearch),
@@ -135,6 +242,7 @@ namespace queries {
         string out;
 
         addLine(out, "Название", toStringExplicit(this->kufar.tag));
+        addLine(out, "Метка", toStringExplicit(this->label));
         addLine(out, "Интервал опроса (с)", toStringExplicit(this->pollIntervalSeconds));
         addLine(out, "Поиск только по заголовку", toStringExplicit(this->kufar.onlyTitleSearch));
         addLine(out, "Минимальная цена", toStringExplicit(this->kufar.priceRange.priceMin));
@@ -157,6 +265,34 @@ namespace queries {
         addLine(out, "Район", mapOpt(this->kufar.areas, joinAreas));
 
         return out;
+    }
+
+    string QueryConfiguration::getCategoryName() const {
+        return categoryName(this->kufar);
+    }
+
+    string QueryConfiguration::getDisplayName() const {
+        if (this->label.has_value() && !this->label->empty()) {
+            return this->label.value();
+        }
+
+        if (this->kufar.tag.has_value() && !this->kufar.tag->empty()) {
+            return formatTag(this->kufar.tag.value());
+        }
+
+        if (const string category = getCategoryName(); !category.empty()) {
+            return category;
+        }
+
+        if (this->kufar.region.has_value()) {
+            return EnumString::region(this->kufar.region.value());
+        }
+
+        if (const string price = priceRangeName(this->kufar.priceRange); !price.empty()) {
+            return price;
+        }
+
+        return "без названия";
     }
 
     QueryConfiguration parseQuery(const json &query) {
@@ -196,6 +332,7 @@ namespace queries {
         queryConfiguration.kufar = kufarConfiguration;
         queryConfiguration.messageThreadID = getOptionalValue<int>(query, "message-thread-id");
         queryConfiguration.pollIntervalSeconds = getOptionalValue<int>(query, "poll-interval-seconds");
+        queryConfiguration.label = parseLabel(getOptionalValue<string>(query, "label"));
 
         if (queryConfiguration.messageThreadID.has_value() && queryConfiguration.messageThreadID.value() <= 0) {
             throw runtime_error(

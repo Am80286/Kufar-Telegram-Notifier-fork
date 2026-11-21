@@ -6,8 +6,8 @@
 //
 
 #include <algorithm>
-#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <ctime>
 #include <exception>
@@ -25,6 +25,7 @@
 #include "telegram.hpp"
 #include "telegram_commands.hpp"
 #include "queries.hpp"
+#include "helperfunctions.hpp"
 #include "tgbot/Types.h"
 
 namespace Telegram {
@@ -33,47 +34,162 @@ namespace Telegram {
 
     namespace {
         constexpr size_t MAX_IMAGES_IN_GROUP = 10;
+        constexpr size_t TITLE_LIMIT = 200;
+        constexpr size_t SELLER_NAME_LIMIT = 100;
+
+        string groupDigits(long long value) {
+            string digits = to_string(value);
+            for (ptrdiff_t position = static_cast<ptrdiff_t>(digits.size()) - 3;
+                 position > 0;
+                 position -= 3) {
+                digits.insert(static_cast<size_t>(position), " ");
+            }
+            return digits;
+        }
+
+        string formatPrice(int priceInKopecks) {
+            if (priceInKopecks <= 0) {
+                return "Цена не указана";
+            }
+            return groupDigits(priceInKopecks / 100) + " BYN";
+        }
+
+        string formatMedian(double medianInKopecks) {
+            if (medianInKopecks <= 0.0) {
+                return "Цена не указана";
+            }
+            return groupDigits(llround(medianInKopecks / 100.0)) + " BYN";
+        }
+
+        string formatDate(time_t date) {
+            if (date == 0) {
+                return "";
+            }
+
+            const tm value = localTime(date);
+            const tm today = localTime(time(nullptr));
+
+            char clock[8] = {};
+            strftime(clock, sizeof(clock), "%H:%M", &value);
+
+            if (value.tm_year == today.tm_year && value.tm_yday == today.tm_yday) {
+                return string("сегодня, ") + clock;
+            }
+            if (value.tm_year == today.tm_year && value.tm_yday + 1 == today.tm_yday) {
+                return string("вчера, ") + clock;
+            }
+
+            char buffer[32] = {};
+            strftime(buffer, sizeof(buffer), "%d.%m.%Y, %H:%M", &value);
+            return buffer;
+        }
+
+        string formatTag(const string &tag) {
+            if (tag.empty()) {
+                return tag;
+            }
+            if (tag.find_first_of(" \t\n") == string::npos) {
+                return "#" + tag;
+            }
+            return tag;
+        }
+
+        string formatCategory(const Kufar::Ad &ad) {
+            if (!ad.subCategory.has_value()) {
+                return "";
+            }
+
+            const string leaf = Kufar::EnumString::subCategory(ad.subCategory.value());
+            if (leaf.empty() || leaf.front() == '[') {
+                return "";
+            }
+
+            if (ad.category.has_value()) {
+                const string parent =
+                    Kufar::EnumString::category(static_cast<Kufar::Category>(ad.category.value()));
+                if (!parent.empty() && parent.front() != '[') {
+                    return parent + " › " + leaf;
+                }
+            }
+
+            return leaf;
+        }
+
+        string truncateText(const string &text, size_t limit) {
+            if (text.size() <= limit) {
+                return text;
+            }
+
+            size_t cut = text.rfind(' ', limit);
+            if (cut == string::npos || cut < limit / 2) {
+                cut = limit;
+            }
+
+            // Never split a UTF-8 sequence.
+            while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
+                cut--;
+            }
+
+            return text.substr(0, cut) + "…";
+        }
 
         string formatPriceAssessment(const Market::PriceAssessment &assessment) {
-            ostringstream medianStream;
-            medianStream << fixed << setprecision(2) << assessment.baselineMedian / 100.0;
-
             ostringstream deviationStream;
-            deviationStream << fixed << setprecision(1) << assessment.deviationPercent;
+            deviationStream << fixed << setprecision(1) << fabs(assessment.deviationPercent);
 
-            return "Медиана рынка: " + medianStream.str() +
-                    "Отклонение от медианы: " + (assessment.deviationPercent > 0.0 ? "+" : "") +
-                    deviationStream.str() + "%\n";
+            string line;
+            if (assessment.deviationPercent < 0.0) {
+                line = "📉 На " + deviationStream.str() + "% ниже медианы";
+            } else if (assessment.deviationPercent > 0.0) {
+                line = "📈 На " + deviationStream.str() + "% выше медианы";
+            } else {
+                line = "➖ На уровне медианы";
+            }
+
+            if (assessment.belowTypicalRange) {
+                line += " · ниже типичного диапазона";
+            } else if (assessment.aboveTypicalRange) {
+                line += " · выше типичного диапазона";
+            }
+
+            return "📊 Медиана рынка: " + formatMedian(assessment.baselineMedian) + "\n" +
+                    line + "\n";
         }
 
         string formatAdvert(const Kufar::Ad &ad, const optional<Market::PriceAssessment> &priceAssessment) {
-            array<char, 26> timeBuffer{};
-            if (ctime_r(&ad.date, timeBuffer.data()) == nullptr) {
-                throw runtime_error("Unable to format advert timestamp.");
-            }
-
-            string formattedTime = timeBuffer.data();
-            if (!formattedTime.empty() && formattedTime.back() == '\n') {
-                formattedTime.pop_back();
-            }
-
             string text;
 
-            if (ad.tag.has_value()) {
-                text += "#" + ad.tag.value() + "\n";
+            if (ad.tag.has_value() && !ad.tag->empty()) {
+                text += "🏷 " + escapeHTML(formatTag(ad.tag.value())) + "\n\n";
             }
 
-            text += "Название: " + ad.title + "\n"
-                    "Дата: " + formattedTime + "\n"
-                    "Цена: " + to_string(ad.price / 100) + " BYN\n";
+            text += "🛍 <b>" + escapeHTML(truncateText(ad.title, TITLE_LIMIT)) + "</b>\n";
+            text += "────────────\n";
+            text += "💰 <b>" + formatPrice(ad.price) + "</b>\n";
+
+            if (const string category = formatCategory(ad); !category.empty()) {
+                text += "📦 " + escapeHTML(category) + "\n";
+            }
+
+            if (const string date = formatDate(ad.date); !date.empty()) {
+                text += "🕒 " + date + "\n";
+            }
 
             if (priceAssessment.has_value()) {
+                text += "────────────\n";
                 text += formatPriceAssessment(priceAssessment.value());
             }
 
-            text += "\nИмя продавца: " + ad.sellerName + "\n"
-                    "Номер телефона не скрыт: " + (ad.phoneNumberIsVisible ? "Да" : "Нет") + "\n"
-                    "Ссылка: " + ad.link;
+            text += "────────────\n";
+
+            const string sellerName = ad.sellerName.empty()
+                ? string("продавец")
+                : escapeHTML(truncateText(ad.sellerName, SELLER_NAME_LIMIT));
+            text += "👤 " + sellerName + "\n";
+            text += string("📞 ") +
+                    (ad.phoneNumberIsVisible ? "Контакты открыты" : "Контакты скрыты") + "\n";
+
+            text += "\n🔗 <a href=\"" + escapeHTML(ad.link) + "\">Открыть на Kufar</a>";
 
             return text;
         }
@@ -111,12 +227,14 @@ namespace Telegram {
             args.chatId = configuration_.chatID;
             args.messageId = message->messageId;
             args.text = newAdvertText;
+            args.parseMode = "HTML";
             api.editMessageText(args);
         } else {
             TgBot::EditMessageCaptionArgs args;
             args.chatId = configuration_.chatID;
             args.messageId = message->messageId;
             args.caption = newAdvertText;
+            args.parseMode = "HTML";
             api.editMessageCaption(args);
         }
     }
@@ -137,7 +255,15 @@ namespace Telegram {
             TgBot::SendMessageArgs args;
             args.chatId = configuration_.chatID;
             args.text = text;
+            args.parseMode = "HTML";
             args.messageThreadId = threadIDValue;
+
+            // The "Открыть на Kufar" link is already in the text; a large
+            // preview card would only duplicate it.
+            auto linkPreview = make_shared<TgBot::LinkPreviewOptions>();
+            linkPreview->isDisabled = true;
+            args.linkPreviewOptions = linkPreview;
+
             return api.sendMessage(args);
         }
 
@@ -146,6 +272,7 @@ namespace Telegram {
             args.chatId = configuration_.chatID;
             args.photo = ad.images.front();
             args.caption = text;
+            args.parseMode = "HTML";
             args.messageThreadId = threadIDValue;
             return api.sendPhoto(args);
         }
@@ -162,6 +289,7 @@ namespace Telegram {
             photo->media = ad.images[i];
             if (i == 0) {
                 photo->caption = text;
+                photo->parseMode = "HTML";
             }
             args.media.push_back(photo);
         }

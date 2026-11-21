@@ -13,6 +13,7 @@
 #include <iterator>
 #include <algorithm>
 #include <cstdint>
+#include <ctime>
 #include <spdlog/spdlog.h>
 
 #include "helperfunctions.hpp"
@@ -118,4 +119,44 @@ string maskToken(const string &token) {
     const string tail = secret.size() > 4 ? secret.substr(secret.size() - 4) : secret;
 
     return botID + ":***" + tail;
+}
+
+string escapeHTML(const string &text) {
+    string escaped;
+    escaped.reserve(text.size());
+
+    for (const char character : text) {
+        switch (character) {
+            case '&':
+                escaped += "&amp;";
+                break;
+            case '<':
+                escaped += "&lt;";
+                break;
+            case '>':
+                escaped += "&gt;";
+                break;
+            case '"':
+                escaped += "&quot;";
+                break;
+            case '\'':
+                escaped += "&#39;";
+                break;
+            default:
+                escaped += character;
+                break;
+        }
+    }
+
+    return escaped;
+}
+
+tm localTime(const time_t &value) {
+    tm result{};
+#ifdef _WIN32
+    localtime_s(&result, &value);
+#else
+    localtime_r(&value, &result);
+#endif
+    return result;
 }

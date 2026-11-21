@@ -27,10 +27,14 @@ namespace queries {
         Kufar::KufarConfiguration kufar;
         std::optional<int> messageThreadID;
         std::optional<int> pollIntervalSeconds;
+        // Bookkeeping name for commands and logs. Never sent to Kufar.
+        std::optional<std::string> label;
 
         std::string cacheKey() const;  
         std::string getDescription() const;
         std::string getDescriptionConcise() const;
+        std::string getCategoryName() const;
+        std::string getDisplayName() const;
     };
 
     QueryConfiguration parseQuery(const nlohmann::json &query);
