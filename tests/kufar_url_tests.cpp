@@ -273,8 +273,26 @@ namespace {
         check(firstPage.find("cat=17010&") != string::npos, "subcategory", __LINE__);
         check(firstPage.find("cnd=1&") != string::npos, "condition", __LINE__);
         check(firstPage.find("ar=v.or:22,23&") != string::npos, "areas", __LINE__);
+        check(firstPage.find("cmp=") == string::npos, "no seller filter when unset", __LINE__);
         check(firstPage.find("cursor=") == string::npos, "no cursor on first page", __LINE__);
 
+        // `cmp=0` (private person) must be sent explicitly; treating the seller
+        // type as a boolean would drop it because 0 is falsy.
+        configuration.sellerType = Kufar::SellerType::individualPerson;
+        check(
+            Kufar::buildSearchURL(configuration).find("cmp=0&") != string::npos,
+            "private seller filter",
+            __LINE__
+        );
+
+        configuration.sellerType = Kufar::SellerType::company;
+        check(
+            Kufar::buildSearchURL(configuration).find("cmp=1&") != string::npos,
+            "company seller filter",
+            __LINE__
+        );
+
+        configuration.sellerType.reset();
         const string nextPage = Kufar::buildSearchURL(configuration, string("abc+def/ghi=="), 200);
         check(
             nextPage.find("cursor=abc%2Bdef%2Fghi%3D%3D&") != string::npos,
